@@ -1,14 +1,17 @@
-.vscode/
-C/
-test.txt
-test*.pdf
-main.typ
-main.pdf
-*.log
-report.json
-report.html
-dbg-err
-
-# Added by cargo
-
 /target
+
+# Local tooling
+.claude/
+.cursor/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+
+# OS and secrets
+.DS_Store
+.env
+.env.*
+
+# Local test files
+test*.pdf
+*.log

@@ -1,14 +1,14 @@
 name: Build
 
 on:
-  # Build master branch only
+  # Build main branch only
   push:
     branches:
-      - master
-  # Build pull requests targeting master branch only
+      - main
+  # Build pull requests targeting main branch only
   pull_request:
     branches:
-      - master
+      - main
 
 jobs:
   test:

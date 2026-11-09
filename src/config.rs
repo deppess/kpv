@@ -164,6 +164,9 @@ pub fn config_load_or_create() -> Result<Config, String> {
     let mut config =
         config_dir().ok_or("Incompatible OS: No config directory has been found")?;
     config.push(CONFIG_FILENAME);
+    std::fs::create_dir_all(config.as_path())
+        .map_err(|x| format!("Could not create config directory: {}", x))?;
+    config.push("config.toml");
 
     let mut config_content = String::new();
     if !config.as_path().exists() {

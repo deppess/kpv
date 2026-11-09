@@ -3,18 +3,18 @@ use crossbeam_channel::Receiver;
 use crossterm::terminal::WindowSize;
 use std::sync::{atomic::AtomicBool, Mutex, OnceLock, RwLock};
 
-pub const HELP_MSG: &str = r#"meowpdf kitty terminal document viewer
+pub const HELP_MSG: &str = r#"viewmer: kitty terminal PDF viewer
 
-Usage: meowpdf <file>
+Usage: viewmer <file>
 
 Global options:
 -h, --help          Print this usage information.
 -v, --version       Print the current version.
 "#;
 
-pub const VERSION: &str = "1.2.2";
-pub const RELEASED: &str = "2026-01-13";
-pub const CONFIG_FILENAME: &str = "meowpdf";
+pub const VERSION: &str = "0.1.0";
+pub const RELEASED: &str = "2026-11-08";
+pub const CONFIG_FILENAME: &str = "viewmer";
 pub const DEFAULT_CONFIG: &str = r#"
 [viewer]
 # Determines how fast the document is scrolled

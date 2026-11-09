@@ -52,7 +52,7 @@ fn main() {
             return;
         }
         "-v" | "--version" => {
-            println!("meowpdf v{} ({})", VERSION, RELEASED);
+            println!("viewmer v{} ({})", VERSION, RELEASED);
             return;
         }
         _ => (),
