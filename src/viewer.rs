@@ -103,9 +103,11 @@ impl Rect for mupdf::rect::Rect {
 
 /* A link target lands a little below the top edge, so its heading isn't cut off */
 const DEST_AT: f32 = 0.03;
+/* How far down the viewport the spot being read is taken to be */
+const READING_AT: f32 = 0.1;
 
 /* The top edge a destination names, in page units from the page's top */
-fn dest_top(kind: DestinationKind) -> Option<f32> {
+pub fn dest_top(kind: DestinationKind) -> Option<f32> {
     let top = match kind {
         DestinationKind::XYZ { top, .. } => top?,
         DestinationKind::FitH { top } | DestinationKind::FitBH { top } => top,
@@ -271,13 +273,33 @@ impl Viewer {
     /* Goes to where a link or outline entry points: the exact spot when it names one,
      * otherwise the top of its page */
     pub fn jump_dest(&mut self, dest: &LinkDestination) {
-        let page = dest.loc.page_number as usize;
-        match dest_top(dest.kind) {
+        self.jump_target(dest.loc.page_number as usize, dest_top(dest.kind));
+    }
+
+    /* Goes to `top` (page units from the page's top) on `page`, or the page's top */
+    pub fn jump_target(&mut self, page: usize, top: Option<f32>) {
+        match top {
             Some(y) if page < self.pages() => self.jump_to(page, y, DEST_AT),
             _ => {
                 let _ = self.jump(page);
             }
         }
+    }
+
+    /* Where reading is: the page and the spot on it (page units from its top) a little
+     * below the viewport's top edge, past where a jump puts a heading */
+    pub fn reading_spot(&self) -> (usize, f32) {
+        if self.cumulative_heights.is_empty() {
+            return (0, 0.0);
+        }
+        let at = self.offset.1 + viewport().height() * READING_AT / self.scale;
+        let page = self.offset2page(at).min(self.pages() - 1);
+        let page_top = if page == 0 {
+            0.0
+        } else {
+            self.cumulative_heights[page - 1]
+        };
+        (page, at - page_top)
     }
 
     pub fn page_first(&self) -> usize {

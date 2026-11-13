@@ -13,6 +13,7 @@ use crate::{
     globals::{CONFIG, RUNNING},
     image::Image,
     labels,
+    outline::{self, OutlineEntry},
 };
 
 #[derive(Clone, PartialEq)]
@@ -45,6 +46,7 @@ pub enum RendererResult {
         links: Vec<Vec<Link>>,
         /* The printed label of every page */
         labels: Vec<String>,
+        outline: Vec<OutlineEntry>,
     },
     Image {
         page: usize,
@@ -146,6 +148,11 @@ impl<'a> RendererInnerState<'a> {
         }
 
         let labels = labels::labels(&labels::read(&document), page_count as usize);
+        /* A document without an outline, or with a broken one, has no contents */
+        let outline = document
+            .outlines()
+            .map(|o| outline::flatten(&o))
+            .unwrap_or_default();
 
         self.document = document;
         self.cache = cache;
@@ -158,6 +165,7 @@ impl<'a> RendererInnerState<'a> {
             widths,
             links,
             labels,
+            outline,
         })
     }
 }

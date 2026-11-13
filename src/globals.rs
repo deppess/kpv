@@ -69,6 +69,8 @@ enabled = true
 "N" = "PrevMatch"
 "Backspace" = "ClearSearch"
 "Esc" = "ClearSearch"
+"o" = "ShowOutline"
+"Tab" = "ShowOutline"
 "#;
 
 /* Hate on me for those global singletons as much as you want. */

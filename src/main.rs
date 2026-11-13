@@ -25,6 +25,12 @@ use crate::image::*;
 
 mod labels;
 
+mod outline;
+
+#[cfg(test)]
+mod testutil;
+use crate::outline::{breadcrumb, current_section, Toc, TocKey};
+
 mod viewer;
 use crate::viewer::*;
 
@@ -38,7 +44,7 @@ mod state;
 use crate::state::*;
 
 mod ui;
-use crate::ui::{help_max_scroll, help_visible, viewport, Segment};
+use crate::ui::{help_max_scroll, help_visible, toc_visible, viewport, Segment, TocRow};
 
 use std::hash::RandomState;
 use std::hash::{BuildHasher, Hasher};
@@ -68,6 +74,8 @@ struct App {
     /* Where the hovered link points */
     link: Option<String>,
     help: Vec<String>,
+    /* The contents panel, kept between openings */
+    toc: Toc,
     throttle: LastExecuted,
 }
 
@@ -181,6 +189,7 @@ fn main() {
         message: None,
         link: None,
         help: ui::help_lines(&help_entries(&key_matcher)),
+        toc: Toc::default(),
         throttle: LastExecuted {
             alpha: SystemTime::now() - Duration::from_millis(500),
             inverse: SystemTime::now() - Duration::from_millis(500),
@@ -227,6 +236,7 @@ fn main() {
                         widths,
                         links,
                         labels,
+                        outline,
                     } => {
                         let uninit = viewer.is_uninit();
 
@@ -243,6 +253,11 @@ fn main() {
                             viewer.scale_page2terminal();
                         }
                         result_receiver.clear_priority(1);
+
+                        app.toc = Toc::new(outline);
+                        if app.mode == Mode::Toc {
+                            reveal_section(&mut app, &viewer);
+                        }
 
                         /* A reload drops the highlights; search the new version again */
                         if let Some(search) = app.search.as_mut() {
@@ -324,6 +339,7 @@ fn main() {
                         .expect("Could not get win size handle") = size;
                 }
                 viewer.bound_viewer();
+                app.toc.scroll_by(0, toc_visible(&viewport()));
                 if let Mode::Help { scroll } = &mut app.mode {
                     let max = help_max_scroll(app.help.len(), help_visible(&viewport()));
                     *scroll = (*scroll).min(max);
@@ -333,7 +349,17 @@ fn main() {
         };
 
         app.link = None;
-        if let Some(link) = viewer.intersect_link(current_mouse) {
+        let over_panel = app.mode == Mode::Toc
+            && ui::over_toc(&viewport(), current_mouse.column, current_mouse.row);
+        if over_panel {
+            /* The panel covers the page: links under it can't be hovered or clicked */
+            execute!(io::stdout(), SetPointerShape(PointerShape::Default))
+                .expect("Could not set pointer shape");
+            if current_mouse.kind.is_down() {
+                toc_click(current_mouse, &mut viewer, &mut app);
+                current_mouse.kind = MouseEventKind::Moved;
+            }
+        } else if let Some(link) = viewer.intersect_link(current_mouse) {
             execute!(io::stdout(), SetPointerShape(PointerShape::Pointer))
                 .expect("Could not set pointer shape");
 
@@ -388,7 +414,13 @@ fn main() {
                 .expect("Could not display pages")
         };
 
-        ui::draw_frame(&title, &status_segments(&app, &viewer))
+        let (page, y) = viewer.reading_spot();
+        let section = current_section(&app.toc.entries, page, y);
+        if app.mode == Mode::Toc {
+            draw_toc(&app, &viewer, section);
+        }
+
+        ui::draw_frame(&title, &status_segments(&app, &viewer, section))
             .expect("Could not draw frame");
         queue!(io::stdout(), EndSynchronizedUpdate).expect("Could not end the frame");
         io::stdout().flush().expect("Could not flush stdout");
@@ -425,13 +457,15 @@ fn main() {
     drivers::graphics::terminal_graphics_remove_leftovers();
 }
 
-/* The pieces of the bottom border, left to right */
-fn status_segments(app: &App, viewer: &Viewer) -> Vec<Segment> {
+/* The pieces of the bottom border, left to right. `section` is the outline entry
+ * being read. */
+fn status_segments(app: &App, viewer: &Viewer, section: Option<usize>) -> Vec<Segment> {
     let mut segments = Vec::new();
     match &app.mode {
         Mode::Command(text) => segments.push(ui::mode_segment(&format!(":{}▏", text))),
         Mode::Search(text) => segments.push(ui::mode_segment(&format!("/{}▏", text))),
         Mode::Help { .. } => segments.push(ui::mode_segment("HELP")),
+        Mode::Toc => segments.push(ui::mode_segment("TOC")),
         Mode::Normal => segments.push(ui::mode_segment("NOR")),
     }
     if viewer.pages() > 0 {
@@ -450,7 +484,85 @@ fn status_segments(app: &App, viewer: &Viewer) -> Vec<Segment> {
     if let Some(link) = &app.link {
         segments.push(Segment::new(link.clone(), None));
     }
+    /* Last, so the border cuts it before anything else */
+    if let Some(i) = section {
+        let chain = breadcrumb(&app.toc.entries, i);
+        let shown = &chain[chain.len().saturating_sub(2)..];
+        segments.push(Segment::new(shown.join(" › "), None));
+    }
     segments
+}
+
+/* Opens the panel's tree down to the section being read and selects it */
+fn reveal_section(app: &mut App, viewer: &Viewer) {
+    let (page, y) = viewer.reading_spot();
+    let section = current_section(&app.toc.entries, page, y);
+    app.toc.reveal(section, toc_visible(&viewport()));
+}
+
+fn draw_toc(app: &App, viewer: &Viewer, section: Option<usize>) {
+    let toc = &app.toc;
+    let rows = toc.rows();
+    let visible: Vec<TocRow> = rows
+        .iter()
+        .skip(toc.scroll)
+        .take(toc_visible(&viewport()))
+        .map(|&i| {
+            let entry = &toc.entries[i];
+            TocRow {
+                depth: entry.depth,
+                marker: match (toc.has_children(i), toc.is_open(i)) {
+                    (false, _) => ' ',
+                    (true, true) => '▾',
+                    (true, false) => '▸',
+                },
+                title: entry.title.clone(),
+                label: entry.page.map(|p| viewer.page_label(p)).unwrap_or_default(),
+                selected: i == toc.selected,
+                current: Some(i) == section,
+            }
+        })
+        .collect();
+    let row = rows.iter().position(|&r| r == toc.selected).unwrap_or(0);
+    let position = format!("{}/{}", (row + 1).min(rows.len()), rows.len());
+    let footer = if toc.editing {
+        format!("/{}▏", toc.filter)
+    } else if !toc.filter.is_empty() {
+        format!("/{} · Esc clears", toc.filter)
+    } else {
+        "⏎ go · ␣ peek · h/l fold · / find".to_owned()
+    };
+    ui::draw_toc(&visible, &position, &footer).expect("Could not draw contents");
+}
+
+/* Goes to the selected entry of the panel */
+fn toc_jump(viewer: &mut Viewer, app: &mut App) {
+    let Some(entry) = app.toc.entries.get(app.toc.selected) else {
+        return;
+    };
+    match entry.page {
+        Some(page) => viewer.jump_target(page, entry.top),
+        None => app.message = Some("This entry points outside the document".to_owned()),
+    }
+}
+
+/* A click on the panel: on a fold marker it folds, elsewhere on an entry it goes there */
+fn toc_click(mouse: MouseEvent, viewer: &mut Viewer, app: &mut App) {
+    let vp = viewport();
+    let Some((row, col)) = ui::toc_hit(&vp, mouse.column, mouse.row) else {
+        return;
+    };
+    let Some(&i) = app.toc.rows().get(app.toc.scroll + row) else {
+        return;
+    };
+    let marker = ui::toc_marker_col(app.toc.entries[i].depth);
+    app.toc.selected = i;
+    if app.toc.has_children(i) && (col == marker || col == marker + 1) {
+        app.toc.toggle(i, toc_visible(&vp));
+    } else {
+        toc_jump(viewer, app);
+        app.mode = Mode::Normal;
+    }
 }
 
 /* Tells the renderer which match to draw in the stronger color and scrolls to it */
@@ -473,6 +585,15 @@ fn handle_mouse_scroll(kind: MouseEventKind, viewer: &mut Viewer, app: &mut App)
         match kind {
             MouseEventKind::ScrollDown => *scroll = (*scroll + 1).min(max),
             MouseEventKind::ScrollUp => *scroll = scroll.saturating_sub(1),
+            _ => (),
+        }
+        return false;
+    }
+    if app.mode == Mode::Toc {
+        let visible = toc_visible(&viewport());
+        match kind {
+            MouseEventKind::ScrollDown => app.toc.scroll_by(3, visible),
+            MouseEventKind::ScrollUp => app.toc.scroll_by(-3, visible),
             _ => (),
         }
         return false;
@@ -556,6 +677,28 @@ fn handle_key(
                     let needle = std::mem::take(text);
                     app.mode = Mode::Normal;
                     start_search(needle, renderer, app);
+                }
+            }
+            return false;
+        }
+        Mode::Toc => {
+            app.message = None;
+            match app.toc.key(key, toc_visible(&viewport())) {
+                TocKey::Handled => (),
+                TocKey::Close => app.mode = Mode::Normal,
+                TocKey::Jump { close } => {
+                    toc_jump(viewer, app);
+                    if close {
+                        app.mode = Mode::Normal;
+                    }
+                }
+                /* The key that opens the panel closes it too, whatever it's bound to */
+                TocKey::Other => {
+                    if key_matcher.dispatch(KeyInput::from(key))
+                        == Some(&ConfigAction::ShowOutline)
+                    {
+                        app.mode = Mode::Normal;
+                    }
                 }
             }
             return false;
@@ -645,6 +788,15 @@ fn handle_key(
         }
         ConfigAction::ClearSearch => {
             run_command(Command::ClearSearch, viewer, renderer, app);
+        }
+        ConfigAction::ShowOutline => {
+            key_matcher.reset();
+            if app.toc.entries.is_empty() {
+                app.message = Some("This document has no table of contents".to_owned());
+            } else {
+                reveal_section(app, viewer);
+                app.mode = Mode::Toc;
+            }
         }
         ConfigAction::NextMatch | ConfigAction::PrevMatch => {
             let steps = if action == ConfigAction::NextMatch {

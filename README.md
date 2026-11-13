@@ -16,7 +16,7 @@ The file name sits in the top edge of the frame. The bottom edge is the status b
 ╰ NOR │ 12/177 │ 110% │ /zettel 2/374 ───╯
 ```
 
-From left to right it shows the mode (or the `:` / `/` prompt), the page, the zoom (100% fits the page width), a pending count, the search and its match number, short messages, and where a hovered link points.
+From left to right it shows the mode (or the `:` / `/` prompt), the page, the zoom (100% fits the page width), a pending count, the search and its match number, short messages, where a hovered link points, and the section you're reading, such as `Methods › Setup`.
 
 ## Keys
 
@@ -27,6 +27,7 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 | `gg` / `G` | First / last page |
 | `:45`, `:xiv` | The page printed as 45 or xiv |
 | `:#45`, `45G`, `45gg` | The 45th page of the file |
+| `o`, `Tab` | Table of contents |
 | `/text` then `Enter` | Search the whole document |
 | `n` / `N` | Next / previous match (wraps around) |
 | `Backspace`, `Esc`, `:noh` | Clear the search |
@@ -39,9 +40,28 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 
 A number before a key repeats it: `3 Ctrl-f` moves three pages, and `5j` moves five steps. In a `:` or `/` prompt, `Esc` or backspacing past the start cancels, and `Ctrl-u` clears the line.
 
-Page numbers follow the book. When the PDF carries printed page numbers (roman numerals for the front matter, a restart at chapter one, prefixes like `A-3`), the status bar shows them as `xiv (14/412)`: the printed number, then the position in the file. A `:` number that no page is printed with goes to that position instead, and the status bar says so.
+Page numbers follow the book. When the PDF carries printed page numbers (roman numerals for the front matter, a restart at chapter one, prefixes like `A-3`), the status bar shows them as `xiv (14/412)`: the printed number, then the position in the file. A `:` number that no page is printed with goes to that position instead, and the status bar says so. Clicking a link opens it, or jumps to the spot it points to when it points into the document.
 
-Search ignores case. All matches are highlighted in yellow, the current one in orange, and the search runs again when the file reloads. Clicking a link opens it, or jumps to the spot it points to when it points into the document.
+## Table of contents
+
+`o` or `Tab` opens the document's outline in a panel over the left side of the page. It opens on the section you're reading, with the sections above it unfolded, and the page numbers in it are the printed ones.
+
+| Key | In the panel |
+|---|---|
+| `j` `k` / arrows, `Ctrl-d` `Ctrl-u`, `g` `G` | Move |
+| `l` / `Right` | Unfold, or step into an unfolded entry |
+| `h` / `Left` | Fold, or step out to the parent entry |
+| `za`, `zM`, `zR` | Fold or unfold one entry, fold all, unfold all |
+| `/text` | Keep only the entries that contain the text, and their parents |
+| `Enter` | Go there and close the panel |
+| `Space` | Go there and keep the panel open |
+| `Esc`, `q`, `o`, `Tab` | Clear the filter, then close |
+
+The mouse wheel scrolls the panel. Clicking an entry goes there, and clicking its `▸` or `▾` folds it.
+
+## Search
+
+Search ignores case. All matches are highlighted in yellow, the current one in orange, and the search runs again when the file reloads.
 
 ## Configuration
 
@@ -49,7 +69,7 @@ The config is created on first run at `~/Library/Application Support/viewmer/con
 
 - `[viewer]`: scroll speed, render precision, memory limit, zoom step and minimum, page gap, preloaded pages, scroll direction.
 - `[viewer.uri_hint]`: `enabled` shows where a hovered link points.
-- `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ZoomIn`, `ZoomOut`, `CenterViewer`, `ToggleInverse`, `ToggleAlpha`, `ShowHelp` and `Quit`.
+- `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `ZoomIn`, `ZoomOut`, `CenterViewer`, `ToggleInverse`, `ToggleAlpha`, `ShowHelp` and `Quit`.
 
 ## Using it from yazi
 
@@ -75,7 +95,7 @@ cargo clippy --all-features -- -D clippy::all
 cargo test --all-features -- --test-threads 1
 ```
 
-The tests cover the page placement and clipping math, reading printed page numbers from a PDF, key and prompt handling, search stepping, the help list, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
+The tests cover the page placement and clipping math, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, key and prompt handling, search stepping, the help list, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
 
 ## License
 

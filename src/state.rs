@@ -11,6 +11,8 @@ pub enum Mode {
     /* Text typed after `/` */
     Search(String),
     Help { scroll: usize },
+    /* The contents panel has the keys */
+    Toc,
 }
 
 #[derive(Debug, PartialEq)]

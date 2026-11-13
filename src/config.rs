@@ -58,11 +58,12 @@ pub enum ConfigAction {
     NextMatch,
     PrevMatch,
     ClearSearch,
+    ShowOutline,
 }
 
 impl ConfigAction {
     /* Every action in the order the help overlay lists them */
-    pub const ALL: [ConfigAction; 20] = [
+    pub const ALL: [ConfigAction; 21] = [
         ConfigAction::MoveDown,
         ConfigAction::MoveUp,
         ConfigAction::MoveLeft,
@@ -76,6 +77,7 @@ impl ConfigAction {
         ConfigAction::NextMatch,
         ConfigAction::PrevMatch,
         ConfigAction::ClearSearch,
+        ConfigAction::ShowOutline,
         ConfigAction::ZoomIn,
         ConfigAction::ZoomOut,
         ConfigAction::CenterViewer,
@@ -102,6 +104,7 @@ impl ConfigAction {
             ConfigAction::NextMatch => "Next search match",
             ConfigAction::PrevMatch => "Previous search match",
             ConfigAction::ClearSearch => "Clear the search and its highlights",
+            ConfigAction::ShowOutline => "Table of contents",
             ConfigAction::ZoomIn => "Zoom in",
             ConfigAction::ZoomOut => "Zoom out",
             ConfigAction::CenterViewer => "Center the page",
@@ -1568,5 +1571,18 @@ mod tests {
         );
 
         assert!(test_bindings_toml == old_test_bindings_toml);
+    }
+
+    #[test]
+    fn default_config_binds_every_action() {
+        let config: Config = toml::from_str(DEFAULT_CONFIG).unwrap();
+        let bindings = config.bindings.unwrap();
+        for action in ConfigAction::ALL {
+            assert!(
+                bindings.as_slice().iter().any(|b| b.action == action),
+                "{:?} has no default key",
+                action
+            );
+        }
     }
 }
