@@ -65,11 +65,13 @@ pub enum ConfigAction {
     PrevMatch,
     ClearSearch,
     ShowOutline,
+    JumpBack,
+    JumpForward,
 }
 
 impl ConfigAction {
     /* Every action in the order the help overlay lists them */
-    pub const ALL: [ConfigAction; 21] = [
+    pub const ALL: [ConfigAction; 23] = [
         ConfigAction::MoveDown,
         ConfigAction::MoveUp,
         ConfigAction::MoveLeft,
@@ -78,6 +80,8 @@ impl ConfigAction {
         ConfigAction::PrevPage,
         ConfigAction::JumpFirstPage,
         ConfigAction::JumpLastPage,
+        ConfigAction::JumpBack,
+        ConfigAction::JumpForward,
         ConfigAction::CommandLine,
         ConfigAction::Search,
         ConfigAction::NextMatch,
@@ -111,6 +115,8 @@ impl ConfigAction {
             ConfigAction::PrevMatch => "Previous search match",
             ConfigAction::ClearSearch => "Clear the search and its highlights",
             ConfigAction::ShowOutline => "Table of contents",
+            ConfigAction::JumpBack => "Back to where the last jump started",
+            ConfigAction::JumpForward => "Forward again after going back",
             ConfigAction::ZoomIn => "Zoom in",
             ConfigAction::ZoomOut => "Zoom out",
             ConfigAction::CenterViewer => "Center the page",
@@ -183,6 +189,23 @@ fn fix_config_keybindings(
     Ok(config_has_changed)
 }
 
+/* Default bindings that later versions moved: (key, action). A config that still has
+ * one exactly as shipped gets it dropped, so the key can go to its new action and the
+ * action gets its new key. A binding the user changed is left alone. */
+const RETIRED_BINDINGS: [(&str, &str); 1] = [("Ctrl+o", "ToggleInverse")];
+
+fn retire_bindings(current: &mut toml::Table, default: &toml::Table) -> bool {
+    let mut changed = false;
+    for (key, action) in RETIRED_BINDINGS {
+        let moved = default.get(key).and_then(Value::as_str) != Some(action);
+        if moved && current.get(key).and_then(Value::as_str) == Some(action) {
+            current.remove(key);
+            changed = true;
+        }
+    }
+    changed
+}
+
 /* Remove old config variables, add new defaults if not existant; return true if config
  * `current` has been modified */
 fn fix_config_toml(
@@ -214,6 +237,7 @@ fn fix_config_toml(
             /* If both were tables, check recursively */
             if key == "bindings" {
                 /* Special case */
+                config_has_changed |= retire_bindings(current_rec, default_rec);
                 config_has_changed |= fix_config_keybindings(current_rec, default_rec)?;
             } else {
                 config_has_changed |= fix_config_toml(current_rec, default_rec)?;
@@ -1590,5 +1614,51 @@ mod tests {
                 action
             );
         }
+    }
+
+    #[test]
+    fn retired_defaults_move_to_their_new_keys() {
+        let mut current = r#"
+        [bindings]
+        "Ctrl+o" = "ToggleInverse"
+        "j" = "MoveDown"
+        "#
+        .parse::<Table>()
+        .unwrap();
+        let default = r#"
+        [bindings]
+        "Ctrl+r" = "ToggleInverse"
+        "Ctrl+o" = "JumpBack"
+        "j" = "MoveDown"
+        "#
+        .parse::<Table>()
+        .unwrap();
+        assert_eq!(fix_config_toml(&mut current, &default), Ok(true));
+        assert_eq!(current, default);
+    }
+
+    #[test]
+    fn changed_bindings_are_not_retired() {
+        /* Invert moved to Ctrl+x by the user; Ctrl+o already bound to something else */
+        let mut current = r#"
+        [bindings]
+        "Ctrl+x" = "ToggleInverse"
+        "Ctrl+o" = "Quit"
+        "#
+        .parse::<Table>()
+        .unwrap();
+        let default = r#"
+        [bindings]
+        "Ctrl+r" = "ToggleInverse"
+        "Ctrl+o" = "JumpBack"
+        "q" = "Quit"
+        "#
+        .parse::<Table>()
+        .unwrap();
+        fix_config_toml(&mut current, &default).unwrap();
+        let bindings = current["bindings"].as_table().unwrap();
+        assert_eq!(bindings["Ctrl+x"].as_str(), Some("ToggleInverse"));
+        assert_eq!(bindings["Ctrl+o"].as_str(), Some("Quit"));
+        assert!(!bindings.contains_key("Ctrl+r"));
     }
 }

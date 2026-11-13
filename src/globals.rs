@@ -46,7 +46,9 @@ enabled = true
 
 [bindings]
 "Ctrl+a" = "ToggleAlpha"
-"Ctrl+o" = "ToggleInverse"
+"Ctrl+r" = "ToggleInverse"
+"Ctrl+o" = "JumpBack"
+"Ctrl+n" = "JumpForward"
 "C" = "CenterViewer"
 "h" = "MoveLeft"
 "j" = "MoveDown"

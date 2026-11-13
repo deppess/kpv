@@ -8,7 +8,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use crossterm::event::MouseEvent;
 use mupdf::{link::LinkDestination, DestinationKind, Link};
 
-use crate::{labels, threads::renderer::*, ui::viewport, Image, CONFIG};
+use crate::{jumps::Spot, labels, threads::renderer::*, ui::viewport, Image, CONFIG};
 
 #[derive(Clone, Copy, Debug)]
 pub struct DisplayRect {
@@ -104,7 +104,7 @@ impl Rect for mupdf::rect::Rect {
 /* A link target lands a little below the top edge, so its heading isn't cut off */
 const DEST_AT: f32 = 0.03;
 /* How far down the viewport the spot being read is taken to be */
-const READING_AT: f32 = 0.1;
+const READING_AT: f32 = 0.25;
 
 /* The top edge a destination names, in page units from the page's top */
 pub fn dest_top(kind: DestinationKind) -> Option<f32> {
@@ -236,6 +236,16 @@ impl Viewer {
         let height = self.page_height(page).unwrap_or(1.0).max(1.0);
         let within = ((self.offset.1 - self.page_top(page)) / height).clamp(0.0, 1.0);
         (page, within, self.scale / self.fit_scale)
+    }
+
+    pub fn spot(&self) -> Spot {
+        let (page, within, _) = self.position();
+        Spot { page, within }
+    }
+
+    /* Goes to a `spot()`, keeping the zoom */
+    pub fn go_to_spot(&mut self, spot: Spot) {
+        self.restore(spot.page, spot.within, self.scale / self.fit_scale);
     }
 
     /* Goes back to a `position()` */

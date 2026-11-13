@@ -27,16 +27,19 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 | `gg` / `G` | First / last page |
 | `:45`, `:xiv` | The page printed as 45 or xiv |
 | `:#45`, `45G`, `45gg` | The 45th page of the file |
+| `Ctrl-o` / `Ctrl-n` | Back to where the last jump started / forward again |
 | `o`, `Tab` | Table of contents |
 | `/text` then `Enter` | Search the whole document |
 | `n` / `N` | Next / previous match (wraps around) |
 | `Backspace`, `Esc`, `:noh` | Clear the search |
 | `+` / `-` | Zoom in / out |
 | `C` | Center the page |
-| `Ctrl-o` | Invert colors |
+| `Ctrl-r` | Invert colors |
 | `Ctrl-a` | Transparent page background |
 | `?` | List every key from your config; `j`/`k`, `d`/`u`, `g`/`G` scroll, `q` closes |
 | `q`, `:q` | Quit |
+
+Jumps are page jumps (`gg`, `G`, `:`), links, table of contents entries and search matches. `Ctrl-o` walks back through where they started and `Ctrl-n` walks forward again, as `Ctrl-o` and `Ctrl-i` do in vim. `Ctrl-i` can't be used, because terminals send it as `Tab`.
 
 A number before a key repeats it: `3 Ctrl-f` moves three pages, and `5j` moves five steps. In a `:` or `/` prompt, `Esc` or backspacing past the start cancels, and `Ctrl-u` clears the line.
 
@@ -71,12 +74,12 @@ Search ignores case. All matches are highlighted in yellow, the current one in o
 
 ## Configuration
 
-The config is created on first run at `~/Library/Application Support/viewmer/config.toml` (macOS) or `~/.config/viewmer/config.toml` (Linux). New settings and keys from later versions are added to it automatically.
+The config is created on first run at `~/Library/Application Support/viewmer/config.toml` (macOS) or `~/.config/viewmer/config.toml` (Linux). New settings and keys from later versions are added to it automatically. A key whose default moved, such as `Ctrl-o` going from inverting colors to jumping back, moves along when the config still has it as shipped; a key you changed stays as you set it.
 
 - `[viewer]`: scroll speed, render precision, memory limit, zoom step and minimum, page gap, preloaded pages, scroll direction.
 - `[viewer.uri_hint]`: `enabled` shows where a hovered link points.
 - `[state]`: `enabled` remembers the position in every file.
-- `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `ZoomIn`, `ZoomOut`, `CenterViewer`, `ToggleInverse`, `ToggleAlpha`, `ShowHelp` and `Quit`.
+- `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `ZoomIn`, `ZoomOut`, `CenterViewer`, `ToggleInverse`, `ToggleAlpha`, `ShowHelp` and `Quit`.
 
 ## Using it from yazi
 
@@ -102,7 +105,7 @@ cargo clippy --all-features -- -D clippy::all
 cargo test --all-features -- --test-threads 1
 ```
 
-The tests cover the page placement and clipping math, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), key and prompt handling, search stepping, the help list, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
+The tests cover the page placement and clipping math, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, moving retired default keys, key and prompt handling, search stepping, the help list, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
 
 ## License
 

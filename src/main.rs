@@ -27,6 +27,9 @@ mod labels;
 
 mod outline;
 
+mod jumps;
+use crate::jumps::Jumps;
+
 mod store;
 use crate::store::{FileState, Store};
 
@@ -83,6 +86,8 @@ struct App {
     toc: Toc,
     /* Where this file's state is remembered; `None` when that's turned off */
     store: Option<Store>,
+    /* Where jumps started, for Ctrl-o and Ctrl-n */
+    jumps: Jumps,
     /* The position waiting to be written, and when */
     save_due: Option<(FileState, Instant)>,
     throttle: LastExecuted,
@@ -200,6 +205,7 @@ fn main() {
         help: ui::help_lines(&help_entries(&key_matcher)),
         toc: Toc::default(),
         store: None,
+        jumps: Jumps::default(),
         save_due: None,
         throttle: LastExecuted {
             alpha: SystemTime::now() - Duration::from_millis(500),
@@ -296,7 +302,7 @@ fn main() {
                             app.search.as_mut().filter(|s| s.needle == needle)
                         {
                             search.set_results(matches, viewer.page_view());
-                            show_current_match(&app, &mut viewer, &renderer);
+                            show_current_match(&mut app, &mut viewer, &renderer);
                         }
                     }
                 }
@@ -393,6 +399,7 @@ fn main() {
                 /* URI points to page in this document */
                 if link.uri.starts_with('#') {
                     if let Some(destination) = &link.dest {
+                        app.jumps.record(viewer.spot());
                         viewer.jump_dest(destination);
                     }
                 } else {
@@ -619,7 +626,10 @@ fn toc_jump(viewer: &mut Viewer, app: &mut App) {
         return;
     };
     match entry.page {
-        Some(page) => viewer.jump_target(page, entry.top),
+        Some(page) => {
+            app.jumps.record(viewer.spot());
+            viewer.jump_target(page, entry.top);
+        }
         None => app.message = Some("This entry points outside the document".to_owned()),
     }
 }
@@ -644,12 +654,13 @@ fn toc_click(mouse: MouseEvent, viewer: &mut Viewer, app: &mut App) {
 }
 
 /* Tells the renderer which match to draw in the stronger color and scrolls to it */
-fn show_current_match(app: &App, viewer: &mut Viewer, renderer: &Renderer) {
+fn show_current_match(app: &mut App, viewer: &mut Viewer, renderer: &Renderer) {
     let Some(search) = &app.search else { return };
     renderer
         .send_and_confirm_action(RendererAction::SetCurrentMatch(search.current))
         .expect("Could not send action to renderer");
     if let Some(m) = search.current_match() {
+        app.jumps.record(viewer.spot());
         viewer.jump_to(m.page, m.y, 0.25);
     }
     viewer.invalidate_registry();
@@ -824,6 +835,7 @@ fn handle_key(
                 (None, ConfigAction::JumpFirstPage) => 0,
                 (None, _) => last_page,
             };
+            app.jumps.record(viewer.spot());
             let _ = viewer.jump(page);
         }
         ConfigAction::Quit => return true,
@@ -866,6 +878,22 @@ fn handle_key(
         }
         ConfigAction::ClearSearch => {
             run_command(Command::ClearSearch, viewer, renderer, app);
+        }
+        ConfigAction::JumpBack | ConfigAction::JumpForward => {
+            for _ in 0..times {
+                let to = if action == ConfigAction::JumpBack {
+                    app.jumps.back(viewer.spot())
+                } else {
+                    app.jumps.forward()
+                };
+                match to {
+                    Some(spot) => viewer.go_to_spot(spot),
+                    None => {
+                        app.message = Some("No further jumps".to_owned());
+                        break;
+                    }
+                }
+            }
         }
         ConfigAction::ShowOutline => {
             key_matcher.reset();
@@ -918,11 +946,13 @@ fn run_command(
         Command::Empty => (),
         Command::Quit => return true,
         Command::Page(page) => {
+            app.jumps.record(viewer.spot());
             if viewer.jump(page - 1).is_err() {
                 app.message = Some(format!("Only {} pages", viewer.pages()));
             }
         }
         Command::Goto(label) => {
+            app.jumps.record(viewer.spot());
             if let Some(page) = viewer.find_label(&label) {
                 let _ = viewer.jump(page);
             } else {
