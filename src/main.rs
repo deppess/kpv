@@ -23,6 +23,8 @@ use threads::renderer::{Renderer, RendererAction, RendererResult};
 mod image;
 use crate::image::*;
 
+mod labels;
+
 mod viewer;
 use crate::viewer::*;
 
@@ -224,6 +226,7 @@ fn main() {
                         cumulative_heights,
                         widths,
                         links,
+                        labels,
                     } => {
                         let uninit = viewer.is_uninit();
 
@@ -232,6 +235,7 @@ fn main() {
                             &cumulative_heights,
                             &widths,
                             &links,
+                            labels,
                         );
                         viewer.invalidate_registry();
                         viewer.center_viewer();
@@ -338,7 +342,7 @@ fn main() {
                 /* URI points to page in this document */
                 if link.uri.starts_with('#') {
                     if let Some(destination) = &link.dest {
-                        let _ = viewer.jump(destination.loc.page_number as usize);
+                        viewer.jump_dest(destination);
                     }
                 } else {
                     let _ = open::that_detached(link.uri);
@@ -431,10 +435,7 @@ fn status_segments(app: &App, viewer: &Viewer) -> Vec<Segment> {
         Mode::Normal => segments.push(ui::mode_segment("NOR")),
     }
     if viewer.pages() > 0 {
-        segments.push(Segment::new(
-            format!("{}/{}", viewer.page_view() + 1, viewer.pages()),
-            None,
-        ));
+        segments.push(Segment::new(viewer.page_status(), None));
         segments.push(Segment::new(format!("{}%", viewer.zoom_percent()), None));
     }
     if let Some(count) = app.count {
@@ -459,7 +460,7 @@ fn show_current_match(app: &App, viewer: &mut Viewer, renderer: &Renderer) {
         .send_and_confirm_action(RendererAction::SetCurrentMatch(search.current))
         .expect("Could not send action to renderer");
     if let Some(m) = search.current_match() {
-        viewer.jump_to(m.page, m.y);
+        viewer.jump_to(m.page, m.y, 0.25);
     }
     viewer.invalidate_registry();
 }
@@ -689,6 +690,23 @@ fn run_command(
         Command::Page(page) => {
             if viewer.jump(page - 1).is_err() {
                 app.message = Some(format!("Only {} pages", viewer.pages()));
+            }
+        }
+        Command::Goto(label) => {
+            if let Some(page) = viewer.find_label(&label) {
+                let _ = viewer.jump(page);
+            } else {
+                match label.parse::<usize>() {
+                    /* No page is printed with that number; take it as a position */
+                    Ok(page) if page >= 1 && page <= viewer.pages() => {
+                        let _ = viewer.jump(page - 1);
+                        app.message = Some(format!(
+                            "No printed page {}, went to page #{}",
+                            label, page
+                        ));
+                    }
+                    _ => app.message = Some(format!("No page or command: {}", label)),
+                }
             }
         }
         Command::ClearSearch => {

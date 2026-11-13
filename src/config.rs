@@ -95,7 +95,9 @@ impl ConfigAction {
             ConfigAction::PrevPage => "Previous page (count: that many pages)",
             ConfigAction::JumpFirstPage => "First page (count: go to that page)",
             ConfigAction::JumpLastPage => "Last page (count: go to that page)",
-            ConfigAction::CommandLine => "Command line  :42 page  :q quit  :noh clear",
+            ConfigAction::CommandLine => {
+                "Command line  :45 printed page  :#45 page in file  :q quit  :noh clear"
+            }
             ConfigAction::Search => "Search the document",
             ConfigAction::NextMatch => "Next search match",
             ConfigAction::PrevMatch => "Previous search match",

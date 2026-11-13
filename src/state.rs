@@ -105,8 +105,10 @@ pub fn edit_prompt(text: &mut String, key: KeyEvent) -> PromptKey {
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Empty,
-    /* 1-indexed page number */
+    /* 1-indexed position in the file, from `:#12` */
     Page(usize),
+    /* A printed page label such as `45` or `xiv` */
+    Goto(String),
     Quit,
     ClearSearch,
     Unknown(String),
@@ -118,9 +120,12 @@ pub fn parse_command(text: &str) -> Command {
         "" => Command::Empty,
         "q" | "q!" | "quit" => Command::Quit,
         "noh" | "nohl" | "nohlsearch" => Command::ClearSearch,
-        _ => match text.parse::<usize>() {
-            Ok(page) if page > 0 => Command::Page(page),
-            _ => Command::Unknown(text.to_owned()),
+        _ => match text.strip_prefix('#') {
+            Some(number) => match number.trim().parse::<usize>() {
+                Ok(page) if page > 0 => Command::Page(page),
+                _ => Command::Unknown(text.to_owned()),
+            },
+            None => Command::Goto(text.to_owned()),
         },
     }
 }
@@ -160,7 +165,7 @@ pub fn help_entries(binds: &Keybinds<ConfigAction>) -> Vec<(String, String)> {
         .collect();
     entries.push((
         "1-9".to_owned(),
-        "Count before a key: 12G page 12, 3 Ctrl+f three pages".to_owned(),
+        "Count before a key: 12G page #12, 3 Ctrl+f three pages".to_owned(),
     ));
     entries.push((
         "Esc".to_owned(),
@@ -187,12 +192,15 @@ mod tests {
 
     #[test]
     fn commands_parse() {
-        assert_eq!(parse_command(" 42 "), Command::Page(42));
-        assert_eq!(parse_command("0"), Command::Unknown("0".to_owned()));
+        assert_eq!(parse_command(" 42 "), Command::Goto("42".to_owned()));
+        assert_eq!(parse_command("xiv"), Command::Goto("xiv".to_owned()));
+        assert_eq!(parse_command("#42"), Command::Page(42));
+        assert_eq!(parse_command("# 7"), Command::Page(7));
+        assert_eq!(parse_command("#0"), Command::Unknown("#0".to_owned()));
+        assert_eq!(parse_command("#x"), Command::Unknown("#x".to_owned()));
         assert_eq!(parse_command("q"), Command::Quit);
         assert_eq!(parse_command("noh"), Command::ClearSearch);
         assert_eq!(parse_command(""), Command::Empty);
-        assert_eq!(parse_command("zoom"), Command::Unknown("zoom".to_owned()));
     }
 
     #[test]

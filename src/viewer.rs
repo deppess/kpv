@@ -6,9 +6,9 @@ use std::{
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use crossterm::event::MouseEvent;
-use mupdf::Link;
+use mupdf::{link::LinkDestination, DestinationKind, Link};
 
-use crate::{threads::renderer::*, ui::viewport, Image, CONFIG};
+use crate::{labels, threads::renderer::*, ui::viewport, Image, CONFIG};
 
 #[derive(Clone, Copy, Debug)]
 pub struct DisplayRect {
@@ -101,6 +101,20 @@ impl Rect for mupdf::rect::Rect {
     }
 }
 
+/* A link target lands a little below the top edge, so its heading isn't cut off */
+const DEST_AT: f32 = 0.03;
+
+/* The top edge a destination names, in page units from the page's top */
+fn dest_top(kind: DestinationKind) -> Option<f32> {
+    let top = match kind {
+        DestinationKind::XYZ { top, .. } => top?,
+        DestinationKind::FitH { top } | DestinationKind::FitBH { top } => top,
+        DestinationKind::FitR { bottom, top, .. } => bottom.min(top),
+        _ => return None,
+    };
+    top.is_finite().then_some(top.max(0.0))
+}
+
 pub struct Viewer {
     scale: f32,
     page_first: usize,  /* The first page in the view */
@@ -112,6 +126,7 @@ pub struct Viewer {
     cumulative_heights: Vec<f32>,
     widths: Vec<f32>,
     links: Vec<Vec<Link>>,
+    labels: Vec<String>,
 
     pub images: HashMap<usize, Arc<RwLock<Image>>>,
     invalidated: HashMap<usize, ()>,
@@ -138,6 +153,7 @@ impl Viewer {
                 cumulative_heights: Vec::new(),
                 widths: Vec::new(),
                 links: Vec::new(),
+                labels: Vec::new(),
                 images: HashMap::new(),
                 invalidated: HashMap::new(),
                 scheduled4render: HashMap::new(),
@@ -160,11 +176,31 @@ impl Viewer {
         cumulative_heights: &[f32],
         widths: &[f32],
         links: &[Vec<Link>],
+        labels: Vec<String>,
     ) {
         self.max_width = max_width;
         self.cumulative_heights = cumulative_heights.to_owned();
         self.widths = widths.to_owned();
         self.links = links.to_owned();
+        self.labels = labels;
+    }
+
+    /* The printed label of `page` */
+    pub fn page_label(&self, page: usize) -> String {
+        self.labels
+            .get(page)
+            .cloned()
+            .unwrap_or_else(|| (page + 1).to_string())
+    }
+
+    /* The page printed as `label` */
+    pub fn find_label(&self, label: &str) -> Option<usize> {
+        labels::find(&self.labels, label)
+    }
+
+    /* `xiv (14/412)` or `45/412` for the status bar */
+    pub fn page_status(&self) -> String {
+        labels::status(&self.labels, self.page_view, self.pages())
     }
 
     pub fn invalidate_registry(&mut self) {
@@ -217,8 +253,9 @@ impl Viewer {
         (self.scale / self.fit_scale * 100.0).round() as u32
     }
 
-    /* Scrolls so that `y` (page units from the top of `page`) sits near the top */
-    pub fn jump_to(&mut self, page: usize, y: f32) {
+    /* Scrolls so that `y` (page units from the top of `page`) sits `at` (a fraction
+     * of the viewport height) from the top */
+    pub fn jump_to(&mut self, page: usize, y: f32, at: f32) {
         if page >= self.cumulative_heights.len() {
             return;
         }
@@ -227,8 +264,20 @@ impl Viewer {
         } else {
             self.cumulative_heights[page - 1]
         };
-        self.offset.1 = page_top + y - viewport().height() * 0.25 / self.scale;
+        self.offset.1 = page_top + y - viewport().height() * at / self.scale;
         self.bound_viewer();
+    }
+
+    /* Goes to where a link or outline entry points: the exact spot when it names one,
+     * otherwise the top of its page */
+    pub fn jump_dest(&mut self, dest: &LinkDestination) {
+        let page = dest.loc.page_number as usize;
+        match dest_top(dest.kind) {
+            Some(y) if page < self.pages() => self.jump_to(page, y, DEST_AT),
+            _ => {
+                let _ = self.jump(page);
+            }
+        }
     }
 
     pub fn page_first(&self) -> usize {
@@ -417,7 +466,7 @@ impl Viewer {
         }
         if link.uri.starts_with('#') {
             let page = link.dest.as_ref().map(|d| d.loc.page_number).unwrap_or(0);
-            Some(format!("→ page {}", page + 1))
+            Some(format!("→ page {}", self.page_label(page as usize)))
         } else {
             Some(format!("→ {}", link.uri))
         }
@@ -566,5 +615,35 @@ impl Viewer {
 
     pub fn placement_ok(&mut self, page: usize) {
         self.failures.remove(&page);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn destinations_name_their_top_edge() {
+        let xyz = DestinationKind::XYZ {
+            left: Some(10.0),
+            top: Some(120.0),
+            zoom: None,
+        };
+        assert_eq!(dest_top(xyz), Some(120.0));
+        assert_eq!(dest_top(DestinationKind::FitH { top: 40.0 }), Some(40.0));
+        let rect = DestinationKind::FitR {
+            left: 0.0,
+            bottom: 300.0,
+            right: 10.0,
+            top: 200.0,
+        };
+        assert_eq!(dest_top(rect), Some(200.0));
+        assert_eq!(dest_top(DestinationKind::Fit), None);
+        let unset = DestinationKind::XYZ {
+            left: None,
+            top: Some(f32::NAN),
+            zoom: None,
+        };
+        assert_eq!(dest_top(unset), None);
     }
 }

@@ -25,7 +25,8 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 | `j` `k` `h` `l` / arrows | Move |
 | `Ctrl-f` / `Ctrl-b`, `PageDown` / `PageUp` | Next / previous page |
 | `gg` / `G` | First / last page |
-| `12G`, `12gg`, `:12` | Page 12 |
+| `:45`, `:xiv` | The page printed as 45 or xiv |
+| `:#45`, `45G`, `45gg` | The 45th page of the file |
 | `/text` then `Enter` | Search the whole document |
 | `n` / `N` | Next / previous match (wraps around) |
 | `Backspace`, `Esc`, `:noh` | Clear the search |
@@ -38,7 +39,9 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 
 A number before a key repeats it: `3 Ctrl-f` moves three pages, and `5j` moves five steps. In a `:` or `/` prompt, `Esc` or backspacing past the start cancels, and `Ctrl-u` clears the line.
 
-Search ignores case. All matches are highlighted in yellow, the current one in orange, and the search runs again when the file reloads. Clicking a link opens it, or jumps to its page when it points into the document.
+Page numbers follow the book. When the PDF carries printed page numbers (roman numerals for the front matter, a restart at chapter one, prefixes like `A-3`), the status bar shows them as `xiv (14/412)`: the printed number, then the position in the file. A `:` number that no page is printed with goes to that position instead, and the status bar says so.
+
+Search ignores case. All matches are highlighted in yellow, the current one in orange, and the search runs again when the file reloads. Clicking a link opens it, or jumps to the spot it points to when it points into the document.
 
 ## Configuration
 
@@ -72,7 +75,7 @@ cargo clippy --all-features -- -D clippy::all
 cargo test --all-features -- --test-threads 1
 ```
 
-The tests cover the page placement and clipping math, key and prompt handling, search stepping, the help list, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
+The tests cover the page placement and clipping math, reading printed page numbers from a PDF, key and prompt handling, search stepping, the help list, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
 
 ## License
 

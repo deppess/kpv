@@ -12,6 +12,7 @@ use crate::{
     drivers::priority_channel::{unbounded_priority, PriorityReceiver, PrioritySender},
     globals::{CONFIG, RUNNING},
     image::Image,
+    labels,
 };
 
 #[derive(Clone, PartialEq)]
@@ -42,6 +43,8 @@ pub enum RendererResult {
         cumulative_heights: Vec<f32>,
         widths: Vec<f32>,
         links: Vec<Vec<Link>>,
+        /* The printed label of every page */
+        labels: Vec<String>,
     },
     Image {
         page: usize,
@@ -142,6 +145,8 @@ impl<'a> RendererInnerState<'a> {
             cache.push(page);
         }
 
+        let labels = labels::labels(&labels::read(&document), page_count as usize);
+
         self.document = document;
         self.cache = cache;
         self.hits.clear();
@@ -152,6 +157,7 @@ impl<'a> RendererInnerState<'a> {
             cumulative_heights,
             widths,
             links,
+            labels,
         })
     }
 }
