@@ -40,6 +40,10 @@ inverse_scroll = false
 # Show where a hovered link points in the status bar
 enabled = true
 
+[state]
+# Remember where you were in every file, and its page offset
+enabled = true
+
 [bindings]
 "Ctrl+a" = "ToggleAlpha"
 "Ctrl+o" = "ToggleInverse"

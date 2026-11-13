@@ -113,6 +113,8 @@ pub enum Command {
     Goto(String),
     Quit,
     ClearSearch,
+    /* `:offset 12`, or `:offset` alone to show it */
+    Offset(Option<i32>),
     Unknown(String),
 }
 
@@ -122,6 +124,13 @@ pub fn parse_command(text: &str) -> Command {
         "" => Command::Empty,
         "q" | "q!" | "quit" => Command::Quit,
         "noh" | "nohl" | "nohlsearch" => Command::ClearSearch,
+        "offset" => Command::Offset(None),
+        _ if text.starts_with("offset ") => {
+            match text["offset ".len()..].trim().parse() {
+                Ok(offset) => Command::Offset(Some(offset)),
+                Err(_) => Command::Unknown(text.to_owned()),
+            }
+        }
         _ => match text.strip_prefix('#') {
             Some(number) => match number.trim().parse::<usize>() {
                 Ok(page) if page > 0 => Command::Page(page),
@@ -203,6 +212,13 @@ mod tests {
         assert_eq!(parse_command("q"), Command::Quit);
         assert_eq!(parse_command("noh"), Command::ClearSearch);
         assert_eq!(parse_command(""), Command::Empty);
+        assert_eq!(parse_command("offset 12"), Command::Offset(Some(12)));
+        assert_eq!(parse_command("offset -2"), Command::Offset(Some(-2)));
+        assert_eq!(parse_command("offset"), Command::Offset(None));
+        assert_eq!(
+            parse_command("offset x"),
+            Command::Unknown("offset x".to_owned())
+        );
     }
 
     #[test]

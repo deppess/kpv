@@ -14,6 +14,7 @@ use crate::{CONFIG_FILENAME, DEFAULT_CONFIG};
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub viewer: ConfigViewer,
+    pub state: ConfigState,
     pub bindings: Option<Keybinds<ConfigAction>>,
 }
 
@@ -33,6 +34,11 @@ pub struct ConfigViewer {
 
 #[derive(Debug, Deserialize)]
 pub struct ConfigViewerUriHint {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfigState {
     pub enabled: bool,
 }
 

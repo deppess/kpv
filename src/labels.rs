@@ -118,6 +118,29 @@ pub fn find(labels: &[String], wanted: &str) -> Option<usize> {
         .or_else(|| labels.iter().position(|l| l.eq_ignore_ascii_case(wanted)))
 }
 
+/* Whether `labels` are just the pages' positions, as when the PDF has none */
+pub fn is_plain(labels: &[String]) -> bool {
+    labels
+        .iter()
+        .enumerate()
+        .all(|(i, l)| *l == (i + 1).to_string())
+}
+
+/* Labels for a scan whose printed page 1 is `offset` pages into the file. The pages
+ * before it are named by position, as `:#3` names them. */
+pub fn with_offset(pages: usize, offset: i32) -> Vec<String> {
+    (0..pages)
+        .map(|p| {
+            let printed = p as i64 + 1 - offset as i64;
+            if printed >= 1 {
+                printed.to_string()
+            } else {
+                format!("#{}", p + 1)
+            }
+        })
+        .collect()
+}
+
 /* The page for the status bar: `xiv (14/412)`, or just `45/412` when the label is the
  * page's position anyway */
 pub fn status(labels: &[String], page: usize, pages: usize) -> String {
@@ -322,6 +345,15 @@ mod tests {
         assert_eq!(find(&labels, "1"), Some(2));
         assert_eq!(find(&labels, "II"), Some(1));
         assert_eq!(find(&labels, "9"), None);
+    }
+
+    #[test]
+    fn an_offset_numbers_a_scan() {
+        assert_eq!(with_offset(4, 2), ["#1", "#2", "1", "2"]);
+        assert_eq!(with_offset(2, 0), ["1", "2"]);
+        assert_eq!(with_offset(2, -3), ["4", "5"]);
+        assert!(is_plain(&with_offset(3, 0)));
+        assert!(!is_plain(&with_offset(3, 1)));
     }
 
     #[test]

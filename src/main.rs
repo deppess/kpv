@@ -27,6 +27,9 @@ mod labels;
 
 mod outline;
 
+mod store;
+use crate::store::{FileState, Store};
+
 #[cfg(test)]
 mod testutil;
 use crate::outline::{breadcrumb, current_section, Toc, TocKey};
@@ -53,10 +56,12 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::sync::RwLock;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 /* Longest wait for kitty to confirm placing a page */
 const RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
+/* How long the view must stay put before its position is written */
+const SAVE_DELAY: Duration = Duration::from_secs(2);
 
 /* Tracks the last executed times of signals for throattling */
 struct LastExecuted {
@@ -76,6 +81,10 @@ struct App {
     help: Vec<String>,
     /* The contents panel, kept between openings */
     toc: Toc,
+    /* Where this file's state is remembered; `None` when that's turned off */
+    store: Option<Store>,
+    /* The position waiting to be written, and when */
+    save_due: Option<(FileState, Instant)>,
     throttle: LastExecuted,
 }
 
@@ -190,6 +199,8 @@ fn main() {
         link: None,
         help: ui::help_lines(&help_entries(&key_matcher)),
         toc: Toc::default(),
+        store: None,
+        save_due: None,
         throttle: LastExecuted {
             alpha: SystemTime::now() - Duration::from_millis(500),
             inverse: SystemTime::now() - Duration::from_millis(500),
@@ -217,10 +228,14 @@ fn main() {
 
         /* Keys go first: a busy renderer or a redraw loop must never make the viewer
          * ignore input, `q` above all */
-        let index_ready = if event_inputs.0.is_empty() {
-            sel.ready()
-        } else {
+        let index_ready = if !event_inputs.0.is_empty() {
             4
+        } else if let Some((_, due)) = &app.save_due {
+            /* Wake up to write the position once the view has stayed put */
+            sel.ready_timeout(due.saturating_duration_since(Instant::now()))
+                .unwrap_or(7)
+        } else {
+            sel.ready()
         };
 
         match index_ready {
@@ -237,6 +252,7 @@ fn main() {
                         links,
                         labels,
                         outline,
+                        id,
                     } => {
                         let uninit = viewer.is_uninit();
 
@@ -251,6 +267,9 @@ fn main() {
                         viewer.center_viewer();
                         if uninit {
                             viewer.scale_page2terminal();
+                            app.store = open_store(&arg, id, &mut viewer);
+                        } else if let Some(store) = app.store.as_mut() {
+                            store.set_id(id);
                         }
                         result_receiver.clear_priority(1);
 
@@ -345,8 +364,14 @@ fn main() {
                     *scroll = (*scroll).min(max);
                 }
             }
+            7 => {
+                save_state(&mut app);
+                continue 'main;
+            }
             _ => unreachable!(),
         };
+
+        schedule_save(&mut app, &viewer);
 
         app.link = None;
         let over_panel = app.mode == Mode::Toc
@@ -446,6 +471,10 @@ fn main() {
         }
     }
 
+    if app.store.is_some() {
+        app.save_due = Some((file_state(&viewer), Instant::now()));
+        save_state(&mut app);
+    }
     RUNNING.store(false, Ordering::Release);
 
     /* ========================== Cook the terminal on exit ========================== */
@@ -455,6 +484,55 @@ fn main() {
     execute!(io::stdout(), Show).expect("Could not show cursor");
     disable_raw_mode().expect("Could not uncook the terminal");
     drivers::graphics::terminal_graphics_remove_leftovers();
+}
+
+/* Opens the remembered state of `file` and goes back to it */
+fn open_store(file: &str, id: Option<String>, viewer: &mut Viewer) -> Option<Store> {
+    if !CONFIG.get().unwrap().state.enabled {
+        return None;
+    }
+    let mut store = Store::new(Store::default_dir()?, id, Path::new(file));
+    if let Some(state) = store.load() {
+        let _ = viewer.set_page_offset(state.page_offset);
+        viewer.restore(state.page, state.within, state.zoom);
+    }
+    Some(store)
+}
+
+fn file_state(viewer: &Viewer) -> FileState {
+    let (page, within, zoom) = viewer.position();
+    FileState {
+        version: 0,
+        page,
+        within,
+        zoom,
+        page_offset: viewer.page_offset(),
+        opened: 0,
+        id: None,
+        path: None,
+    }
+}
+
+/* Starts the wait before writing whenever the view has moved, so that scrolling
+ * writes once, after it stops */
+fn schedule_save(app: &mut App, viewer: &Viewer) {
+    let Some(store) = &app.store else { return };
+    let state = file_state(viewer);
+    if !store.is_dirty(&state) {
+        app.save_due = None;
+    } else if app.save_due.as_ref().is_none_or(|(s, _)| *s != state) {
+        app.save_due = Some((state, Instant::now() + SAVE_DELAY));
+    }
+}
+
+fn save_state(app: &mut App) {
+    let (Some(store), Some((state, _))) = (app.store.as_mut(), app.save_due.take())
+    else {
+        return;
+    };
+    if let Err(e) = store.save(&state) {
+        app.message = Some(format!("Could not remember the position: {}", e));
+    }
 }
 
 /* The pieces of the bottom border, left to right. `section` is the outline entry
@@ -867,6 +945,18 @@ fn run_command(
                     .send_and_confirm_action(RendererAction::ClearSearch)
                     .expect("Could not send action to renderer");
                 viewer.invalidate_registry();
+            }
+        }
+        Command::Offset(None) => {
+            app.message = Some(match viewer.page_offset() {
+                0 => "No page offset: :offset 12 makes the 13th page printed page 1"
+                    .to_owned(),
+                n => format!("Printed page 1 is page #{}", n + 1),
+            })
+        }
+        Command::Offset(Some(offset)) => {
+            if let Err(e) = viewer.set_page_offset(offset) {
+                app.message = Some(e);
             }
         }
         Command::Unknown(text) => {

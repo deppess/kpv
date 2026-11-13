@@ -128,7 +128,11 @@ pub struct Viewer {
     cumulative_heights: Vec<f32>,
     widths: Vec<f32>,
     links: Vec<Vec<Link>>,
+    /* The page labels in the PDF, and the ones shown: those, or for a PDF without
+     * any, the ones `page_offset` gives */
+    pdf_labels: Vec<String>,
     labels: Vec<String>,
+    page_offset: i32,
 
     pub images: HashMap<usize, Arc<RwLock<Image>>>,
     invalidated: HashMap<usize, ()>,
@@ -155,7 +159,9 @@ impl Viewer {
                 cumulative_heights: Vec::new(),
                 widths: Vec::new(),
                 links: Vec::new(),
+                pdf_labels: Vec::new(),
                 labels: Vec::new(),
+                page_offset: 0,
                 images: HashMap::new(),
                 invalidated: HashMap::new(),
                 scheduled4render: HashMap::new(),
@@ -184,7 +190,67 @@ impl Viewer {
         self.cumulative_heights = cumulative_heights.to_owned();
         self.widths = widths.to_owned();
         self.links = links.to_owned();
-        self.labels = labels;
+        self.pdf_labels = labels;
+        self.apply_labels();
+    }
+
+    fn apply_labels(&mut self) {
+        self.labels = if self.page_offset != 0 && labels::is_plain(&self.pdf_labels) {
+            labels::with_offset(self.pdf_labels.len(), self.page_offset)
+        } else {
+            self.pdf_labels.clone()
+        };
+    }
+
+    /* Numbers a scan whose printed page 1 is `offset` pages into the file. A PDF with
+     * its own page labels keeps them. */
+    pub fn set_page_offset(&mut self, offset: i32) -> Result<(), String> {
+        if offset != 0 && !labels::is_plain(&self.pdf_labels) {
+            return Err("This PDF has its own page numbers".to_owned());
+        }
+        self.page_offset = offset;
+        self.apply_labels();
+        Ok(())
+    }
+
+    pub fn page_offset(&self) -> i32 {
+        self.page_offset
+    }
+
+    fn page_top(&self, page: usize) -> f32 {
+        if page == 0 {
+            0.0
+        } else {
+            self.cumulative_heights[page - 1]
+        }
+    }
+
+    /* Where the viewport is, in a form that survives other terminal sizes: the page at
+     * its top, how far down that page it starts (0 to 1), and the zoom relative to
+     * fitting the page width */
+    pub fn position(&self) -> (usize, f32, f32) {
+        if self.cumulative_heights.is_empty() {
+            return (0, 0.0, 1.0);
+        }
+        let page = self.page_first.min(self.pages() - 1);
+        let height = self.page_height(page).unwrap_or(1.0).max(1.0);
+        let within = ((self.offset.1 - self.page_top(page)) / height).clamp(0.0, 1.0);
+        (page, within, self.scale / self.fit_scale)
+    }
+
+    /* Goes back to a `position()` */
+    pub fn restore(&mut self, page: usize, within: f32, zoom: f32) {
+        if self.cumulative_heights.is_empty() {
+            return;
+        }
+        if zoom.is_finite() && zoom > 0.0 {
+            self.scale = self.fit_scale * zoom;
+        }
+        self.center_viewer();
+        let page = page.min(self.pages() - 1);
+        let height = self.page_height(page).unwrap_or(0.0);
+        self.offset.1 = self.page_top(page) + within.clamp(0.0, 1.0) * height;
+        self.bound_viewer();
     }
 
     /* The printed label of `page` */

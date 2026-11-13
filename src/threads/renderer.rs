@@ -14,6 +14,7 @@ use crate::{
     image::Image,
     labels,
     outline::{self, OutlineEntry},
+    store,
 };
 
 #[derive(Clone, PartialEq)]
@@ -47,6 +48,8 @@ pub enum RendererResult {
         /* The printed label of every page */
         labels: Vec<String>,
         outline: Vec<OutlineEntry>,
+        /* The permanent half of the PDF's /ID */
+        id: Option<String>,
     },
     Image {
         page: usize,
@@ -153,6 +156,7 @@ impl<'a> RendererInnerState<'a> {
             .outlines()
             .map(|o| outline::flatten(&o))
             .unwrap_or_default();
+        let id = store::document_id(&document);
 
         self.document = document;
         self.cache = cache;
@@ -166,6 +170,7 @@ impl<'a> RendererInnerState<'a> {
             links,
             labels,
             outline,
+            id,
         })
     }
 }

@@ -40,7 +40,13 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 
 A number before a key repeats it: `3 Ctrl-f` moves three pages, and `5j` moves five steps. In a `:` or `/` prompt, `Esc` or backspacing past the start cancels, and `Ctrl-u` clears the line.
 
-Page numbers follow the book. When the PDF carries printed page numbers (roman numerals for the front matter, a restart at chapter one, prefixes like `A-3`), the status bar shows them as `xiv (14/412)`: the printed number, then the position in the file. A `:` number that no page is printed with goes to that position instead, and the status bar says so. Clicking a link opens it, or jumps to the spot it points to when it points into the document.
+Page numbers follow the book. When the PDF carries printed page numbers (roman numerals for the front matter, a restart at chapter one, prefixes like `A-3`), the status bar shows them as `xiv (14/412)`: the printed number, then the position in the file. A `:` number that no page is printed with goes to that position instead, and the status bar says so. For a scan without printed page numbers, `:offset 12` makes the 13th page printed page 1, and `:offset` shows the current offset. Clicking a link opens it, or jumps to the spot it points to when it points into the document.
+
+## Remembered position
+
+Each file opens where you left it: the same page, the same spot on it and the same zoom, along with its page offset. The position is written two seconds after the view stops moving and again on quitting, so closing the terminal window doesn't lose it. A position is kept per page rather than in pixels, so it comes back right in a window of another size.
+
+Each file gets one small TOML file under `~/Library/Application Support/viewmer/state/` (macOS) or `~/.local/state/viewmer/` (Linux). A file is found by the permanent ID inside the PDF, so moving or renaming it keeps its place, and by its path, for PDFs without an ID and for LaTeX output that gets a new one on every build. Files are replaced in one step, so a crash or two viewers on one file never leave a broken one, and a broken or unknown file is ignored. `[state] enabled = false` turns it off.
 
 ## Table of contents
 
@@ -69,6 +75,7 @@ The config is created on first run at `~/Library/Application Support/viewmer/con
 
 - `[viewer]`: scroll speed, render precision, memory limit, zoom step and minimum, page gap, preloaded pages, scroll direction.
 - `[viewer.uri_hint]`: `enabled` shows where a hovered link points.
+- `[state]`: `enabled` remembers the position in every file.
 - `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `ZoomIn`, `ZoomOut`, `CenterViewer`, `ToggleInverse`, `ToggleAlpha`, `ShowHelp` and `Quit`.
 
 ## Using it from yazi
@@ -95,7 +102,7 @@ cargo clippy --all-features -- -D clippy::all
 cargo test --all-features -- --test-threads 1
 ```
 
-The tests cover the page placement and clipping math, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, key and prompt handling, search stepping, the help list, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
+The tests cover the page placement and clipping math, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), key and prompt handling, search stepping, the help list, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
 
 ## License
 
