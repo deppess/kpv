@@ -1,7 +1,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{
-    drivers::graphics::*, viewer::DisplayRect, CONFIG, IMAGE_PADDING, TERMINAL_SIZE,
+    drivers::graphics::*,
+    ui::{viewport, Viewport},
+    viewer::DisplayRect,
+    IMAGE_PADDING,
 };
 
 use mupdf::Pixmap;
@@ -87,84 +90,13 @@ impl Image {
 
     pub fn display(&self, rect: DisplayRect) -> Result<bool, String> {
         /* `true` indicates that the image was actually displayed and was not
-         * tried to be displayed outside of the viewpoint */
-
-        let config = CONFIG.get().unwrap();
-        let padding = *IMAGE_PADDING.get().unwrap();
-        let render_precision = config.viewer.render_precision;
-
-        let scale = rect.height as f64 / (self.dimensions.1 as f64 / render_precision);
-        let render_precision_norm = render_precision / scale;
-
-        let (pxpercol, pxperrow);
-        let (col0, col1, row0, row1);
-        let (padding_top, padding_bottom);
-        let (padding_left, padding_right);
-        let (cropx, cropy, cropw, croph);
-
-        let terminal_size = TERMINAL_SIZE.get().unwrap().read().unwrap();
-
-        pxpercol = terminal_size.width as f64 / terminal_size.columns as f64;
-        pxperrow = terminal_size.height as f64 / terminal_size.rows as f64;
-
-        if rect.x < 0 {
-            col0 = 0.0f64;
-        } else {
-            col0 = rect.x as f64 / pxpercol;
-        }
-        col1 = (rect.x as f64 + rect.width as f64) / pxpercol;
-
-        if rect.y < 0 {
-            row0 = 0.0f64;
-        } else {
-            row0 = rect.y as f64 / pxperrow;
-        }
-        row1 = (rect.y as f64 + rect.height as f64) / pxperrow;
-
-        /* Round up to the nearest whole col and row so that is guaranteed that the
-         * the whole image is rendered without being shrinked down. `padding_*` values
-         * tell how much of the image's invinsible padding should be included at each
-         * side when displaying the image on an area of integer rows and column */
-        padding_left = (col0 - col0.floor()) * pxpercol * render_precision_norm;
-        padding_right = (col1.ceil() - col1) * pxpercol * render_precision_norm;
-        padding_top = (row0 - row0.floor()) * pxperrow * render_precision_norm;
-        padding_bottom = (row1.ceil() - row1) * pxperrow * render_precision_norm;
-
-        if rect.x < 0 {
-            cropx = (padding as f64 - rect.x as f64 * render_precision_norm) as usize;
-            cropw = ((col1 * pxpercol * render_precision_norm) + padding_right) as usize;
-        } else {
-            cropx = (padding as f64 - padding_left) as usize;
-            cropw = (padding_left + padding_right + self.dimensions.0 as f64) as usize;
-        }
-
-        if rect.y < 0 {
-            cropy = (padding as f64 - rect.y as f64 * render_precision_norm) as usize;
-            croph = ((row1 * pxperrow * render_precision_norm) + padding_bottom) as usize;
-        } else {
-            cropy = (padding as f64 - padding_top) as usize;
-            croph = (padding_top + padding_bottom + self.dimensions.1 as f64) as usize;
-        }
-
-        /* If trying to display outside of terminal just return */
-        if col1 < 0.0f64
-            || row1 < 0.0f64
-            || col0 > terminal_size.columns as f64
-            || row0 > terminal_size.rows as f64
-        {
+         * tried to be displayed outside of the viewport */
+        let padding = *IMAGE_PADDING.get().unwrap() as f64;
+        let Some(p) = placement(rect, self.dimensions, padding, &viewport()) else {
             return Ok(false);
-        }
+        };
 
-        /* Do not forget that columns and rows are one-indexed in terminals */
-        terminal_graphics_display_image(
-            self.id,
-            1 + col0.floor() as usize,
-            1 + row0.floor() as usize,
-            (cropx, cropy, cropw, croph),
-            (col1.ceil() - col0.floor()) as usize,
-            (row1.ceil() - row0.floor()) as usize,
-        )?;
-
+        terminal_graphics_display_image(self.id, p.col, p.row, p.crop, p.cols, p.rows)?;
         Ok(true)
     }
 
@@ -180,5 +112,137 @@ impl Image {
         )?;
 
         Ok(())
+    }
+}
+
+/* Where and how much of a page image to show: a 1-indexed cell position, the crop of
+ * the padded bitmap in pixels, and the size in cells */
+#[derive(Debug, PartialEq)]
+pub struct Placement {
+    pub col: usize,
+    pub row: usize,
+    pub crop: (usize, usize, usize, usize),
+    pub cols: usize,
+    pub rows: usize,
+}
+
+/* `rect` is the page in viewport pixels, `dimensions` the bitmap size without its
+ * `padding`. The page is clipped to the viewport on every side and the shown area is
+ * widened to whole cells, which the transparent padding absorbs. */
+pub fn placement(
+    rect: DisplayRect,
+    dimensions: (i32, i32),
+    padding: f64,
+    vp: &Viewport,
+) -> Option<Placement> {
+    if rect.width <= 0 || rect.height <= 0 || dimensions.1 <= 0 {
+        return None;
+    }
+    /* Bitmap pixels per displayed pixel */
+    let k = dimensions.1 as f64 / rect.height as f64;
+    let (rx, ry) = (rect.x as f64, rect.y as f64);
+
+    let x0 = rx.max(0.0);
+    let x1 = (rx + rect.width as f64).min(vp.width() as f64);
+    let y0 = ry.max(0.0);
+    let y1 = (ry + rect.height as f64).min(vp.height() as f64);
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+
+    let col0 = (x0 / vp.pxpercol).floor();
+    let col1 = (x1 / vp.pxpercol).ceil().min(vp.cols as f64);
+    let row0 = (y0 / vp.pxperrow).floor();
+    let row1 = (y1 / vp.pxperrow).ceil().min(vp.rows as f64);
+    if col1 <= col0 || row1 <= row0 {
+        return None;
+    }
+
+    let full_w = dimensions.0 as f64 + 2.0 * padding;
+    let full_h = dimensions.1 as f64 + 2.0 * padding;
+    let sx0 = (padding + (col0 * vp.pxpercol - rx) * k).clamp(0.0, full_w);
+    let sx1 = (padding + (col1 * vp.pxpercol - rx) * k).clamp(0.0, full_w);
+    let sy0 = (padding + (row0 * vp.pxperrow - ry) * k).clamp(0.0, full_h);
+    let sy1 = (padding + (row1 * vp.pxperrow - ry) * k).clamp(0.0, full_h);
+    if sx1 <= sx0 || sy1 <= sy0 {
+        return None;
+    }
+
+    Some(Placement {
+        col: 1 + vp.col as usize + col0 as usize,
+        row: 1 + vp.row as usize + row0 as usize,
+        crop: (
+            sx0 as usize,
+            sy0 as usize,
+            (sx1 - sx0) as usize,
+            (sy1 - sy0) as usize,
+        ),
+        cols: (col1 - col0) as usize,
+        rows: (row1 - row0) as usize,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /* 100x40 cells of 10x20 px: viewport 98x38 cells at (1, 1), 980x760 px */
+    fn vp() -> Viewport {
+        Viewport::from_size(100, 40, 1000, 800)
+    }
+
+    fn rect(x: i32, y: i32, width: i32, height: i32) -> DisplayRect {
+        DisplayRect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn page_fully_inside_starts_after_the_border() {
+        /* Bitmap at scale 1: 200x400 px page shown at 200x400 */
+        let p = placement(rect(100, 40, 200, 400), (200, 400), 30.0, &vp()).unwrap();
+        assert_eq!((p.col, p.row, p.cols, p.rows), (12, 4, 20, 20));
+        assert_eq!(p.crop, (30, 30, 200, 400));
+    }
+
+    #[test]
+    fn page_scrolled_above_the_top_is_cropped() {
+        let p = placement(rect(0, -100, 200, 400), (200, 400), 30.0, &vp()).unwrap();
+        assert_eq!((p.row, p.rows), (2, 15));
+        assert_eq!(p.crop.1, 130);
+        assert_eq!(p.crop.3, 300);
+    }
+
+    #[test]
+    fn page_running_past_the_bottom_stops_at_the_border() {
+        let p = placement(rect(0, 600, 200, 400), (200, 400), 30.0, &vp()).unwrap();
+        /* Rows 30..38 of the viewport; nothing below row 38 */
+        assert_eq!((p.row, p.rows), (32, 8));
+        assert_eq!(p.crop.3, 160);
+    }
+
+    #[test]
+    fn page_wider_than_the_viewport_is_clipped_on_the_right() {
+        let p = placement(rect(-50, 0, 2000, 400), (2000, 400), 30.0, &vp()).unwrap();
+        assert_eq!((p.col, p.cols), (2, 98));
+        assert_eq!(p.crop.0, 80);
+        assert_eq!(p.crop.2, 980);
+    }
+
+    #[test]
+    fn crop_scales_with_render_precision() {
+        /* Bitmap rendered at twice the displayed size */
+        let p = placement(rect(0, 0, 200, 400), (400, 800), 30.0, &vp()).unwrap();
+        assert_eq!(p.crop, (30, 30, 400, 800));
+    }
+
+    #[test]
+    fn page_outside_the_viewport_is_skipped() {
+        assert!(placement(rect(0, 800, 200, 400), (200, 400), 30.0, &vp()).is_none());
+        assert!(placement(rect(0, -500, 200, 400), (200, 400), 30.0, &vp()).is_none());
+        assert!(placement(rect(990, 0, 200, 400), (200, 400), 30.0, &vp()).is_none());
     }
 }

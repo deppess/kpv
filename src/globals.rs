@@ -37,14 +37,8 @@ pages_preloaded = 3
 inverse_scroll = false
 
 [viewer.uri_hint]
-# Enabled URI hints
+# Show where a hovered link points in the status bar
 enabled = true
-# Background color of hint bar
-background = "blue"
-# Foreground color of hint bar text
-foreground = "white"
-# Hint bar width percentage based on terminal width
-width = 0.2 
 
 [bindings]
 "Ctrl+a" = "ToggleAlpha"
@@ -68,6 +62,13 @@ width = 0.2
 "Ctrl+f" = "NextPage"
 "q" = "Quit"
 "Q" = "Quit"
+"?" = "ShowHelp"
+":" = "CommandLine"
+"/" = "Search"
+"n" = "NextMatch"
+"N" = "PrevMatch"
+"Backspace" = "ClearSearch"
+"Esc" = "ClearSearch"
 "#;
 
 /* Hate on me for those global singletons as much as you want. */

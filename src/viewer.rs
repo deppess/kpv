@@ -1,20 +1,14 @@
 use core::f32;
 use std::{
     collections::{HashMap, VecDeque},
-    io,
     sync::{Arc, RwLock},
 };
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use crossterm::{
-    cursor::{MoveToRow, RestorePosition, SavePosition},
-    event::MouseEvent,
-    execute,
-    style::{Print, ResetColor, SetBackgroundColor, SetForegroundColor},
-};
+use crossterm::event::MouseEvent;
 use mupdf::Link;
 
-use crate::{threads::renderer::*, Image, CONFIG, TERMINAL_SIZE};
+use crate::{threads::renderer::*, ui::viewport, Image, CONFIG};
 
 #[derive(Clone, Copy, Debug)]
 pub struct DisplayRect {
@@ -112,6 +106,7 @@ pub struct Viewer {
     page_first: usize,  /* The first page in the view */
     page_view: usize,   /* The page in the middle */
     offset: (f32, f32), /* Offset is given in page size units ≈ pixels */
+    fit_scale: f32,     /* Scale at which the widest page fills the viewport */
 
     max_width: f32,
     cumulative_heights: Vec<f32>,
@@ -123,6 +118,8 @@ pub struct Viewer {
     scheduled4render: HashMap<usize, ()>,
     memory_used: usize,
     last_rendered: VecDeque<usize>,
+    /* Failed placements in a row, per page */
+    failures: HashMap<usize, usize>,
 
     sender_rerender: Sender<()>,
 }
@@ -136,6 +133,7 @@ impl Viewer {
                 page_first: 0,
                 page_view: 0,
                 offset: (0.0f32, 0.0f32),
+                fit_scale: 1.0,
                 max_width: -f32::INFINITY,
                 cumulative_heights: Vec::new(),
                 widths: Vec::new(),
@@ -145,6 +143,7 @@ impl Viewer {
                 scheduled4render: HashMap::new(),
                 memory_used: 0,
                 last_rendered: VecDeque::new(),
+                failures: HashMap::new(),
                 sender_rerender,
             },
             receiver_rerender,
@@ -187,6 +186,9 @@ impl Viewer {
     }
 
     pub fn jump(&mut self, page: usize) -> Result<(), String> {
+        if self.cumulative_heights.is_empty() {
+            return Err("The document has no pages".to_owned());
+        }
         let res = if page >= self.cumulative_heights.len() {
             Err("Given page number is larger than the number of pages".to_owned())
         } else {
@@ -210,16 +212,29 @@ impl Viewer {
         self.bound_viewer();
     }
 
-    #[allow(dead_code)]
-    pub fn get_scale(&self) -> f32 {
-        self.scale
+    /* Zoom relative to fitting the page width, which is 100% */
+    pub fn zoom_percent(&self) -> u32 {
+        (self.scale / self.fit_scale * 100.0).round() as u32
+    }
+
+    /* Scrolls so that `y` (page units from the top of `page`) sits near the top */
+    pub fn jump_to(&mut self, page: usize, y: f32) {
+        if page >= self.cumulative_heights.len() {
+            return;
+        }
+        let page_top = if page == 0 {
+            0.0
+        } else {
+            self.cumulative_heights[page - 1]
+        };
+        self.offset.1 = page_top + y - viewport().height() * 0.25 / self.scale;
+        self.bound_viewer();
     }
 
     pub fn page_first(&self) -> usize {
         self.page_first
     }
 
-    #[allow(dead_code)]
     pub fn page_view(&self) -> usize {
         self.page_view
     }
@@ -245,35 +260,27 @@ impl Viewer {
     pub fn bound_viewer(&mut self) {
         let config = CONFIG.get().unwrap();
 
-        let terminal_size_lock = TERMINAL_SIZE.get().unwrap().read().unwrap();
+        let vp = viewport();
+        let (vp_width, vp_height) = (vp.width(), vp.height());
 
         self.scale = f32::max(self.scale, config.viewer.scale_min);
         self.offset.0 = f32::max(
             self.offset.0,
-            f32::min(
-                0.0f32,
-                terminal_size_lock.width as f32 - self.max_width * self.scale,
-            ),
+            f32::min(0.0f32, vp_width - self.max_width * self.scale),
         );
         self.offset.0 = f32::min(
             self.offset.0,
-            f32::max(
-                0.0f32,
-                terminal_size_lock.width as f32 - self.max_width * self.scale,
-            ),
+            f32::max(0.0f32, vp_width - self.max_width * self.scale),
         );
         let max_yoffset = f32::max(
             -10.0f32,
-            self.cumulative_heights.last().unwrap_or(&0.0f32)
-                - terminal_size_lock.height as f32 / self.scale,
+            self.cumulative_heights.last().unwrap_or(&0.0f32) - vp_height / self.scale,
         );
         self.offset.1 = f32::max(self.offset.1, -10.0f32);
         self.offset.1 = f32::min(self.offset.1, max_yoffset);
 
         self.page_first = self.offset2page(self.offset.1);
-        self.page_view = self.offset2page(
-            self.offset.1 + terminal_size_lock.height as f32 * 0.5 / self.scale,
-        );
+        self.page_view = self.offset2page(self.offset.1 + vp_height * 0.5 / self.scale);
         let mut min_page = 0;
         if !self.cumulative_heights.is_empty() {
             min_page = self.cumulative_heights.len() - 1;
@@ -282,18 +289,14 @@ impl Viewer {
     }
 
     pub fn scale_page2terminal(&mut self) {
-        let terminal_size_lock = TERMINAL_SIZE.get().unwrap().read().unwrap();
-
-        let factor = terminal_size_lock.width as f32 / (self.max_width * self.scale);
+        let factor = viewport().width() / (self.max_width * self.scale);
         self.scale *= factor;
+        self.fit_scale = self.scale;
         self.bound_viewer();
     }
 
     pub fn center_viewer(&mut self) {
-        let terminal_size_lock = TERMINAL_SIZE.get().unwrap().read().unwrap();
-
-        self.offset.0 =
-            terminal_size_lock.width as f32 * 0.5 - self.max_width * self.scale * 0.5;
+        self.offset.0 = viewport().width() * 0.5 - self.max_width * self.scale * 0.5;
     }
 
     pub fn page_height(&self, page: usize) -> Result<f32, String> {
@@ -321,8 +324,8 @@ impl Viewer {
     fn calculate_display_bounds(&self) -> Vec<(usize, DisplayRect)> {
         /* Calculated bounds to display the pages in the temrinal */
         let mut bounds = Vec::new();
-        /* Current terminal height */
-        let terminal_height = TERMINAL_SIZE.get().unwrap().read().unwrap().height as f32;
+        /* Current viewport height */
+        let terminal_height = viewport().height();
         /* Bottom margin */
         let margin_bottom = CONFIG.get().unwrap().viewer.margin_bottom;
         /* Number of pages */
@@ -371,6 +374,11 @@ impl Viewer {
 
     /* ================================ Miscellaneous ================================ */
     pub fn intersect_link(&self, mouse: MouseEvent) -> Option<Link> {
+        let vp = viewport();
+        let mouse = (
+            mouse.column as i32 - vp.x() as i32,
+            mouse.row as i32 - vp.y() as i32,
+        );
         let mut intersected_page = None;
         let mut intersected_rect = None;
         for bound in self.calculate_display_bounds() {
@@ -385,9 +393,8 @@ impl Viewer {
         intersected_page?;
 
         let page_point = (
-            ((mouse.column as i32 - intersected_rect.unwrap().x) as f32 / self.scale)
-                as i32,
-            ((mouse.row as i32 - intersected_rect.unwrap().y) as f32 / self.scale) as i32,
+            ((mouse.0 - intersected_rect.unwrap().x) as f32 / self.scale) as i32,
+            ((mouse.1 - intersected_rect.unwrap().y) as f32 / self.scale) as i32,
         );
         let mut intersected_link = None;
         let links = &self.links[intersected_page.unwrap()];
@@ -403,42 +410,17 @@ impl Viewer {
         Some(intersected_link.unwrap().clone())
     }
 
-    pub fn uri_hint(&self, link: &Link) {
-        let config = CONFIG.get().unwrap();
-        if !config.viewer.uri_hint.enabled {
-            return;
+    /* What a hovered link points to, for the status bar */
+    pub fn link_hint(&self, link: &Link) -> Option<String> {
+        if !CONFIG.get().unwrap().viewer.uri_hint.enabled {
+            return None;
         }
-
-        let terminal_size = TERMINAL_SIZE.get().unwrap().read().unwrap();
-
-        let width = (terminal_size.width as f32 * config.viewer.uri_hint.width) as usize;
-        if width < 5 {
-            return;
-        }
-
-        let text = if link.uri.len() <= width {
-            if link.uri.starts_with('#') {
-                let page_number =
-                    link.dest.as_ref().map(|d| d.loc.page_number).unwrap_or(0);
-                format!("Page {}", page_number + 1)
-            } else {
-                link.uri.to_string()
-            }
+        if link.uri.starts_with('#') {
+            let page = link.dest.as_ref().map(|d| d.loc.page_number).unwrap_or(0);
+            Some(format!("→ page {}", page + 1))
         } else {
-            format!("{}..", &link.uri[0..(width - 2)])
-        };
-
-        execute!(
-            io::stdout(),
-            SavePosition,
-            MoveToRow(terminal_size.rows),
-            SetBackgroundColor(config.viewer.uri_hint.background),
-            SetForegroundColor(config.viewer.uri_hint.foreground),
-            Print(text),
-            ResetColor,
-            RestorePosition
-        )
-        .unwrap();
+            Some(format!("→ {}", link.uri))
+        }
     }
 
     pub fn handle_image(&mut self, page: usize, image: Option<Arc<RwLock<Image>>>) {
@@ -466,6 +448,7 @@ impl Viewer {
         self.last_rendered.push_back(page);
 
         self.images.insert(page, image_unwrapped);
+        self.failures.remove(&page);
         self.scheduled4render.remove(&page);
 
         while self.memory_used >= config.viewer.memory_limit {
@@ -562,9 +545,26 @@ impl Viewer {
         Ok(displayed)
     }
 
-    pub fn schedule_transfer(&mut self, page: usize) {
-        let image = self.images[&page].clone();
+    /* Sends a page image again after kitty failed to place it. Gives up after a few
+     * failures in a row so a terminal that keeps refusing can't cause an endless
+     * redraw loop; `false` means it gave up. */
+    pub fn schedule_transfer(&mut self, page: usize) -> bool {
+        const MAX_RETRIES: usize = 3;
+
+        let failures = self.failures.entry(page).or_insert(0);
+        *failures += 1;
+        if *failures > MAX_RETRIES {
+            return false;
+        }
+        let Some(image) = self.images.get(&page).cloned() else {
+            return true;
+        };
         let _ = image.read().unwrap().transfer();
         let _ = self.sender_rerender.send(());
+        true
+    }
+
+    pub fn placement_ok(&mut self, page: usize) {
+        self.failures.remove(&page);
     }
 }

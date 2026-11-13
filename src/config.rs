@@ -5,7 +5,6 @@ use std::{
 
 use toml::{Table, Value};
 
-use crossterm::style::Color;
 use dirs::config_dir;
 use keybinds::Keybinds;
 use serde::Deserialize;
@@ -35,12 +34,9 @@ pub struct ConfigViewer {
 #[derive(Debug, Deserialize)]
 pub struct ConfigViewerUriHint {
     pub enabled: bool,
-    pub background: Color,
-    pub foreground: Color,
-    pub width: f32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConfigAction {
     ToggleAlpha,
     ToggleInverse,
@@ -56,6 +52,63 @@ pub enum ConfigAction {
     PrevPage,
     NextPage,
     Quit,
+    ShowHelp,
+    CommandLine,
+    Search,
+    NextMatch,
+    PrevMatch,
+    ClearSearch,
+}
+
+impl ConfigAction {
+    /* Every action in the order the help overlay lists them */
+    pub const ALL: [ConfigAction; 20] = [
+        ConfigAction::MoveDown,
+        ConfigAction::MoveUp,
+        ConfigAction::MoveLeft,
+        ConfigAction::MoveRight,
+        ConfigAction::NextPage,
+        ConfigAction::PrevPage,
+        ConfigAction::JumpFirstPage,
+        ConfigAction::JumpLastPage,
+        ConfigAction::CommandLine,
+        ConfigAction::Search,
+        ConfigAction::NextMatch,
+        ConfigAction::PrevMatch,
+        ConfigAction::ClearSearch,
+        ConfigAction::ZoomIn,
+        ConfigAction::ZoomOut,
+        ConfigAction::CenterViewer,
+        ConfigAction::ToggleInverse,
+        ConfigAction::ToggleAlpha,
+        ConfigAction::ShowHelp,
+        ConfigAction::Quit,
+    ];
+
+    pub fn describe(self) -> &'static str {
+        match self {
+            ConfigAction::MoveDown => "Move down",
+            ConfigAction::MoveUp => "Move up",
+            ConfigAction::MoveLeft => "Move left",
+            ConfigAction::MoveRight => "Move right",
+            ConfigAction::NextPage => "Next page (count: that many pages)",
+            ConfigAction::PrevPage => "Previous page (count: that many pages)",
+            ConfigAction::JumpFirstPage => "First page (count: go to that page)",
+            ConfigAction::JumpLastPage => "Last page (count: go to that page)",
+            ConfigAction::CommandLine => "Command line  :42 page  :q quit  :noh clear",
+            ConfigAction::Search => "Search the document",
+            ConfigAction::NextMatch => "Next search match",
+            ConfigAction::PrevMatch => "Previous search match",
+            ConfigAction::ClearSearch => "Clear the search and its highlights",
+            ConfigAction::ZoomIn => "Zoom in",
+            ConfigAction::ZoomOut => "Zoom out",
+            ConfigAction::CenterViewer => "Center the page",
+            ConfigAction::ToggleInverse => "Invert colors",
+            ConfigAction::ToggleAlpha => "Transparent page background",
+            ConfigAction::ShowHelp => "Show this list",
+            ConfigAction::Quit => "Quit",
+        }
+    }
 }
 
 fn fix_config_keybindings(

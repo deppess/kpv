@@ -66,8 +66,16 @@ pub fn terminal_graphics_transfer_bitmap(
 
     /* Wait for the file to get automatically get deleted by Kitty from a previous
      * render instance of this exact image with the same ID. If this is not done
-     * this will lead to extreme bugs where the Kitty terminal can crash */
-    while tmp_file_path.as_path().exists() {}
+     * this will lead to extreme bugs where the Kitty terminal can crash. Kitty
+     * may also never read it (e.g. the command was lost), so don't wait forever. */
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while tmp_file_path.as_path().exists() {
+        if std::time::Instant::now() >= deadline {
+            let _ = std::fs::remove_file(tmp_file_path.as_path());
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
 
     {
         let mut tmp_file = File::create(tmp_file_path.as_path()).unwrap();
@@ -172,5 +180,64 @@ impl GraphicsResponse {
 
     pub fn payload(&self) -> &str {
         self.payload.as_str()
+    }
+}
+
+/* Removes temporary image files that kitty never read: this instance's, and any
+ * older than a minute from earlier instances (kitty reads them within
+ * milliseconds, so those are stale) */
+pub fn terminal_graphics_remove_leftovers() {
+    const STALE: Duration = Duration::from_secs(60);
+
+    let own = format!("tty-graphics-protocol-{}-", SOFTWARE_ID.get().unwrap());
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !is_image_temp_file(&name) {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > STALE);
+        if name.starts_with(&own) || stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/* `tty-graphics-protocol-<hex instance id>-<image id>`, as written above */
+fn is_image_temp_file(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("tty-graphics-protocol-") else {
+        return false;
+    };
+    let Some((instance, image)) = rest.split_once('-') else {
+        return false;
+    };
+    !instance.is_empty()
+        && instance.chars().all(|c| c.is_ascii_hexdigit())
+        && !image.is_empty()
+        && image.chars().all(|c| c.is_ascii_digit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_our_temp_file_names_match() {
+        assert!(is_image_temp_file(
+            "tty-graphics-protocol-C76AC3E0051128DB-3"
+        ));
+        assert!(!is_image_temp_file(
+            "tty-graphics-protocol-C76AC3E0051128DB-3x"
+        ));
+        assert!(!is_image_temp_file("tty-graphics-protocol-other.png"));
+        assert!(!is_image_temp_file("tty-graphics-protocol-ZZ-1"));
+        assert!(!is_image_temp_file("notes.txt"));
     }
 }
