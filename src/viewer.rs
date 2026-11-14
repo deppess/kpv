@@ -246,6 +246,33 @@ impl Viewer {
             .map(|(_, rect)| rect)
     }
 
+    /* Sets the zoom relative to fitting the page width, keeping the spot at the top of
+     * the view */
+    pub fn set_zoom(&mut self, zoom: f32) {
+        let (page, within, _) = self.position();
+        self.restore(page, within, zoom);
+    }
+
+    /* Zooms so the page being read fits the viewport whole, and shows all of it */
+    pub fn fit_page(&mut self) {
+        if self.cumulative_heights.is_empty() {
+            return;
+        }
+        let page = self.page_view;
+        let margin = CONFIG.get().unwrap().viewer.margin_bottom;
+        let height = (self.page_height(page).unwrap_or(1.0) - margin).max(1.0);
+        let width = self.page_width(page).unwrap_or(1.0).max(1.0);
+        let vp = viewport();
+        let scale = (vp.height() / height).min(vp.width() / width);
+        self.restore(page, 0.0, scale / self.fit_scale);
+    }
+
+    /* Scrolls by `pages` viewport heights; negative goes up */
+    pub fn scroll_screens(&mut self, pages: f32) {
+        let amount = viewport().height() * pages / self.scale;
+        self.scroll((0.0, amount));
+    }
+
     /* Viewport pixels per page unit */
     pub fn pixels_per_unit(&self) -> f32 {
         self.scale

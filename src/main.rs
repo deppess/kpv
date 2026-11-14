@@ -945,6 +945,10 @@ fn handle_key(
                 .expect("Could not send action to renderer");
             viewer.invalidate_registry();
         }
+        ConfigAction::HalfPageDown => viewer.scroll_screens(0.5 * times as f32),
+        ConfigAction::HalfPageUp => viewer.scroll_screens(-0.5 * times as f32),
+        ConfigAction::FitWidth => viewer.set_zoom(1.0),
+        ConfigAction::FitPage => viewer.fit_page(),
         ConfigAction::ZoomIn => viewer.scale(config.viewer.scale_amount * times as f32),
         ConfigAction::ZoomOut => viewer.scale(-config.viewer.scale_amount * times as f32),
         ConfigAction::ShowHelp => {

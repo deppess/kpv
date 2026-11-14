@@ -70,15 +70,21 @@ pub enum ConfigAction {
     SetMark,
     GoToMark,
     ToggleRuler,
+    HalfPageDown,
+    HalfPageUp,
+    FitWidth,
+    FitPage,
 }
 
 impl ConfigAction {
     /* Every action in the order the help overlay lists them */
-    pub const ALL: [ConfigAction; 26] = [
+    pub const ALL: [ConfigAction; 30] = [
         ConfigAction::MoveDown,
         ConfigAction::MoveUp,
         ConfigAction::MoveLeft,
         ConfigAction::MoveRight,
+        ConfigAction::HalfPageDown,
+        ConfigAction::HalfPageUp,
         ConfigAction::NextPage,
         ConfigAction::PrevPage,
         ConfigAction::JumpFirstPage,
@@ -95,6 +101,8 @@ impl ConfigAction {
         ConfigAction::ShowOutline,
         ConfigAction::ZoomIn,
         ConfigAction::ZoomOut,
+        ConfigAction::FitWidth,
+        ConfigAction::FitPage,
         ConfigAction::CenterViewer,
         ConfigAction::ToggleRuler,
         ConfigAction::ToggleInverse,
@@ -131,6 +139,10 @@ impl ConfigAction {
             ConfigAction::ZoomOut => "Zoom out",
             ConfigAction::CenterViewer => "Center the page",
             ConfigAction::ToggleInverse => "Invert colors",
+            ConfigAction::HalfPageDown => "Half a screen down",
+            ConfigAction::HalfPageUp => "Half a screen up",
+            ConfigAction::FitWidth => "Fit the page width (100%)",
+            ConfigAction::FitPage => "Fit the whole page",
             ConfigAction::ToggleRuler => {
                 "Reading ruler: j and k then move it line by line"
             }

@@ -24,6 +24,7 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 |---|---|
 | `j` `k` `h` `l` / arrows | Move |
 | `Ctrl-f` / `Ctrl-b`, `PageDown` / `PageUp` | Next / previous page |
+| `Ctrl-d` / `Ctrl-u` | Half a screen down / up |
 | `gg` / `G` | First / last page |
 | `:45`, `:xiv` | The page printed as 45 or xiv |
 | `:#45`, `45G`, `45gg` | The 45th page of the file |
@@ -35,6 +36,7 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 | `n` / `N` | Next / previous match (wraps around) |
 | `Backspace`, `Esc`, `:noh` | Clear the search |
 | `+` / `-` | Zoom in / out |
+| `=` / `z` | Fit the page width (100%) / fit the whole page |
 | `C` | Center the page |
 | `r` | Reading ruler on / off |
 | `Ctrl-r` | Invert colors |
@@ -88,7 +90,7 @@ The config is created on first run at `~/Library/Application Support/viewmer/con
 - `[viewer]`: scroll speed, render precision, memory limit, zoom step and minimum, page gap, preloaded pages, scroll direction.
 - `[viewer.uri_hint]`: `enabled` shows where a hovered link points.
 - `[state]`: `enabled` remembers the position and marks of every file.
-- `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `SetMark`, `GoToMark`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `ZoomIn`, `ZoomOut`, `CenterViewer`, `ToggleRuler`, `ToggleInverse`, `ToggleAlpha`, `ShowHelp` and `Quit`.
+- `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `SetMark`, `GoToMark`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `HalfPageDown`, `HalfPageUp`, `ZoomIn`, `ZoomOut`, `FitWidth`, `FitPage`, `CenterViewer`, `ToggleRuler`, `ToggleInverse`, `ToggleAlpha`, `ShowHelp` and `Quit`.
 
 ## Using it from yazi
 
