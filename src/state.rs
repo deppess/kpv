@@ -115,6 +115,9 @@ pub enum Command {
     ClearSearch,
     /* `:offset 12`, or `:offset` alone to show it */
     Offset(Option<i32>),
+    Marks,
+    /* `:delm ab` deletes marks a and b, `:delm!` all of them */
+    DeleteMarks(Option<String>),
     Unknown(String),
 }
 
@@ -125,6 +128,12 @@ pub fn parse_command(text: &str) -> Command {
         "q" | "q!" | "quit" => Command::Quit,
         "noh" | "nohl" | "nohlsearch" => Command::ClearSearch,
         "offset" => Command::Offset(None),
+        "marks" => Command::Marks,
+        "delm!" | "delmarks!" => Command::DeleteMarks(None),
+        _ if text.starts_with("delm ") || text.starts_with("delmarks ") => {
+            let letters = text.split_once(' ').map(|(_, l)| l).unwrap_or("");
+            Command::DeleteMarks(Some(letters.split_whitespace().collect()))
+        }
         _ if text.starts_with("offset ") => {
             match text["offset ".len()..].trim().parse() {
                 Ok(offset) => Command::Offset(Some(offset)),
@@ -215,6 +224,12 @@ mod tests {
         assert_eq!(parse_command("offset 12"), Command::Offset(Some(12)));
         assert_eq!(parse_command("offset -2"), Command::Offset(Some(-2)));
         assert_eq!(parse_command("offset"), Command::Offset(None));
+        assert_eq!(parse_command("marks"), Command::Marks);
+        assert_eq!(parse_command("delm!"), Command::DeleteMarks(None));
+        assert_eq!(
+            parse_command("delm a b"),
+            Command::DeleteMarks(Some("ab".to_owned()))
+        );
         assert_eq!(
             parse_command("offset x"),
             Command::Unknown("offset x".to_owned())

@@ -28,6 +28,8 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 | `:45`, `:xiv` | The page printed as 45 or xiv |
 | `:#45`, `45G`, `45gg` | The 45th page of the file |
 | `Ctrl-o` / `Ctrl-n` | Back to where the last jump started / forward again |
+| `ma` / `` `a `` or `'a` | Set mark a / go to it (any letter a to z) |
+| ` `` ` | Back to where the last jump started |
 | `o`, `Tab` | Table of contents |
 | `/text` then `Enter` | Search the whole document |
 | `n` / `N` | Next / previous match (wraps around) |
@@ -39,7 +41,9 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 | `?` | List every key from your config; `j`/`k`, `d`/`u`, `g`/`G` scroll, `q` closes |
 | `q`, `:q` | Quit |
 
-Jumps are page jumps (`gg`, `G`, `:`), links, table of contents entries and search matches. `Ctrl-o` walks back through where they started and `Ctrl-n` walks forward again, as `Ctrl-o` and `Ctrl-i` do in vim. `Ctrl-i` can't be used, because terminals send it as `Tab`.
+Marks belong to the file and are remembered with its position. `:marks` lists them with their pages, `:delm a` deletes mark a and `:delm!` deletes them all.
+
+Jumps are page jumps (`gg`, `G`, `:`), marks, links, table of contents entries and search matches. `Ctrl-o` walks back through where they started and `Ctrl-n` walks forward again, as `Ctrl-o` and `Ctrl-i` do in vim. `Ctrl-i` can't be used, because terminals send it as `Tab`.
 
 A number before a key repeats it: `3 Ctrl-f` moves three pages, and `5j` moves five steps. In a `:` or `/` prompt, `Esc` or backspacing past the start cancels, and `Ctrl-u` clears the line.
 
@@ -47,7 +51,7 @@ Page numbers follow the book. When the PDF carries printed page numbers (roman n
 
 ## Remembered position
 
-Each file opens where you left it: the same page, the same spot on it and the same zoom, along with its page offset. The position is written two seconds after the view stops moving and again on quitting, so closing the terminal window doesn't lose it. A position is kept per page rather than in pixels, so it comes back right in a window of another size.
+Each file opens where you left it: the same page, the same spot on it and the same zoom, along with its marks and page offset. The position is written two seconds after the view stops moving and again on quitting, so closing the terminal window doesn't lose it. A position is kept per page rather than in pixels, so it comes back right in a window of another size.
 
 Each file gets one small TOML file under `~/Library/Application Support/viewmer/state/` (macOS) or `~/.local/state/viewmer/` (Linux). A file is found by the permanent ID inside the PDF, so moving or renaming it keeps its place, and by its path, for PDFs without an ID and for LaTeX output that gets a new one on every build. Files are replaced in one step, so a crash or two viewers on one file never leave a broken one, and a broken or unknown file is ignored. `[state] enabled = false` turns it off.
 
@@ -78,8 +82,8 @@ The config is created on first run at `~/Library/Application Support/viewmer/con
 
 - `[viewer]`: scroll speed, render precision, memory limit, zoom step and minimum, page gap, preloaded pages, scroll direction.
 - `[viewer.uri_hint]`: `enabled` shows where a hovered link points.
-- `[state]`: `enabled` remembers the position in every file.
-- `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `ZoomIn`, `ZoomOut`, `CenterViewer`, `ToggleInverse`, `ToggleAlpha`, `ShowHelp` and `Quit`.
+- `[state]`: `enabled` remembers the position and marks of every file.
+- `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `SetMark`, `GoToMark`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `ZoomIn`, `ZoomOut`, `CenterViewer`, `ToggleInverse`, `ToggleAlpha`, `ShowHelp` and `Quit`.
 
 ## Using it from yazi
 
@@ -105,7 +109,7 @@ cargo clippy --all-features -- -D clippy::all
 cargo test --all-features -- --test-threads 1
 ```
 
-The tests cover the page placement and clipping math, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, moving retired default keys, key and prompt handling, search stepping, the help list, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
+The tests cover the page placement and clipping math, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, moving retired default keys, key and prompt handling, search stepping, the help list, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
 
 ## License
 

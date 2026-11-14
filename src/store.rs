@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -8,7 +9,7 @@ use std::{
 use mupdf::{pdf::PdfDocument, Document};
 use serde::{Deserialize, Serialize};
 
-use crate::CONFIG_FILENAME;
+use crate::{jumps::Spot, CONFIG_FILENAME};
 
 const VERSION: u32 = 1;
 
@@ -34,6 +35,9 @@ pub struct FileState {
     pub id: Option<String>,
     #[serde(default)]
     pub path: Option<String>,
+    /* Marks set with `m`, by letter */
+    #[serde(default)]
+    pub marks: BTreeMap<String, Spot>,
 }
 
 /* The state files of one document: one under its permanent PDF ID, one under its path.
@@ -139,6 +143,7 @@ fn same_place(a: &FileState, b: &FileState) -> bool {
         && (a.within - b.within).abs() < 1e-4
         && (a.zoom - b.zoom).abs() < 1e-4
         && a.page_offset == b.page_offset
+        && a.marks == b.marks
         && a.id == b.id
         && a.path == b.path
 }
@@ -191,7 +196,29 @@ mod tests {
             opened: 0,
             id: None,
             path: None,
+            marks: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn marks_come_back() {
+        let dir = dir("marks");
+        let mut store = Store::new(dir.clone(), None, Path::new("a.pdf"));
+        let mut with_marks = state(1);
+        with_marks.marks.insert(
+            "a".to_owned(),
+            Spot {
+                page: 9,
+                within: 0.5,
+            },
+        );
+        assert!(store.is_dirty(&with_marks));
+        store.save(&with_marks).unwrap();
+        let loaded = Store::new(dir.clone(), None, Path::new("a.pdf"))
+            .load()
+            .unwrap();
+        assert_eq!(loaded.marks, with_marks.marks);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

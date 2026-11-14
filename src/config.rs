@@ -67,11 +67,13 @@ pub enum ConfigAction {
     ShowOutline,
     JumpBack,
     JumpForward,
+    SetMark,
+    GoToMark,
 }
 
 impl ConfigAction {
     /* Every action in the order the help overlay lists them */
-    pub const ALL: [ConfigAction; 23] = [
+    pub const ALL: [ConfigAction; 25] = [
         ConfigAction::MoveDown,
         ConfigAction::MoveUp,
         ConfigAction::MoveLeft,
@@ -82,6 +84,8 @@ impl ConfigAction {
         ConfigAction::JumpLastPage,
         ConfigAction::JumpBack,
         ConfigAction::JumpForward,
+        ConfigAction::SetMark,
+        ConfigAction::GoToMark,
         ConfigAction::CommandLine,
         ConfigAction::Search,
         ConfigAction::NextMatch,
@@ -117,6 +121,10 @@ impl ConfigAction {
             ConfigAction::ShowOutline => "Table of contents",
             ConfigAction::JumpBack => "Back to where the last jump started",
             ConfigAction::JumpForward => "Forward again after going back",
+            ConfigAction::SetMark => "Set a mark: then a letter a-z",
+            ConfigAction::GoToMark => {
+                "Go to a mark: then its letter, or again to go back"
+            }
             ConfigAction::ZoomIn => "Zoom in",
             ConfigAction::ZoomOut => "Zoom out",
             ConfigAction::CenterViewer => "Center the page",

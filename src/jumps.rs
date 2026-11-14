@@ -1,5 +1,7 @@
+use serde::{Deserialize, Serialize};
+
 /* A place in the document: a page and how far down it, from 0 to 1 */
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Spot {
     pub page: usize,
     pub within: f32,

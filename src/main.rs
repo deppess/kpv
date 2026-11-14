@@ -28,7 +28,7 @@ mod labels;
 mod outline;
 
 mod jumps;
-use crate::jumps::Jumps;
+use crate::jumps::{Jumps, Spot};
 
 mod store;
 use crate::store::{FileState, Store};
@@ -52,6 +52,7 @@ use crate::state::*;
 mod ui;
 use crate::ui::{help_max_scroll, help_visible, toc_visible, viewport, Segment, TocRow};
 
+use std::collections::BTreeMap;
 use std::hash::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::io::{self, Write};
@@ -88,6 +89,9 @@ struct App {
     store: Option<Store>,
     /* Where jumps started, for Ctrl-o and Ctrl-n */
     jumps: Jumps,
+    marks: BTreeMap<char, Spot>,
+    /* `m` or a backtick was typed and waits for its letter */
+    pending_mark: Option<ConfigAction>,
     /* The position waiting to be written, and when */
     save_due: Option<(FileState, Instant)>,
     throttle: LastExecuted,
@@ -206,6 +210,8 @@ fn main() {
         toc: Toc::default(),
         store: None,
         jumps: Jumps::default(),
+        marks: BTreeMap::new(),
+        pending_mark: None,
         save_due: None,
         throttle: LastExecuted {
             alpha: SystemTime::now() - Duration::from_millis(500),
@@ -273,7 +279,7 @@ fn main() {
                         viewer.center_viewer();
                         if uninit {
                             viewer.scale_page2terminal();
-                            app.store = open_store(&arg, id, &mut viewer);
+                            app.store = open_store(&arg, id, &mut viewer, &mut app.marks);
                         } else if let Some(store) = app.store.as_mut() {
                             store.set_id(id);
                         }
@@ -479,7 +485,7 @@ fn main() {
     }
 
     if app.store.is_some() {
-        app.save_due = Some((file_state(&viewer), Instant::now()));
+        app.save_due = Some((file_state(&viewer, &app.marks), Instant::now()));
         save_state(&mut app);
     }
     RUNNING.store(false, Ordering::Release);
@@ -494,7 +500,12 @@ fn main() {
 }
 
 /* Opens the remembered state of `file` and goes back to it */
-fn open_store(file: &str, id: Option<String>, viewer: &mut Viewer) -> Option<Store> {
+fn open_store(
+    file: &str,
+    id: Option<String>,
+    viewer: &mut Viewer,
+    marks: &mut BTreeMap<char, Spot>,
+) -> Option<Store> {
     if !CONFIG.get().unwrap().state.enabled {
         return None;
     }
@@ -502,11 +513,25 @@ fn open_store(file: &str, id: Option<String>, viewer: &mut Viewer) -> Option<Sto
     if let Some(state) = store.load() {
         let _ = viewer.set_page_offset(state.page_offset);
         viewer.restore(state.page, state.within, state.zoom);
+        *marks = state
+            .marks
+            .iter()
+            .filter_map(|(k, spot)| Some((mark_letter(k)?, *spot)))
+            .collect();
     }
     Some(store)
 }
 
-fn file_state(viewer: &Viewer) -> FileState {
+/* A mark's letter from its name in the state file */
+fn mark_letter(name: &str) -> Option<char> {
+    let mut chars = name.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if c.is_ascii_lowercase() => Some(c),
+        _ => None,
+    }
+}
+
+fn file_state(viewer: &Viewer, marks: &BTreeMap<char, Spot>) -> FileState {
     let (page, within, zoom) = viewer.position();
     FileState {
         version: 0,
@@ -517,6 +542,7 @@ fn file_state(viewer: &Viewer) -> FileState {
         opened: 0,
         id: None,
         path: None,
+        marks: marks.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
     }
 }
 
@@ -524,7 +550,7 @@ fn file_state(viewer: &Viewer) -> FileState {
  * writes once, after it stops */
 fn schedule_save(app: &mut App, viewer: &Viewer) {
     let Some(store) = &app.store else { return };
-    let state = file_state(viewer);
+    let state = file_state(viewer, &app.marks);
     if !store.is_dirty(&state) {
         app.save_due = None;
     } else if app.save_due.as_ref().is_none_or(|(s, _)| *s != state) {
@@ -559,6 +585,11 @@ fn status_segments(app: &App, viewer: &Viewer, section: Option<usize>) -> Vec<Se
     }
     if let Some(count) = app.count {
         segments.push(Segment::new(count.to_string(), None));
+    }
+    match app.pending_mark {
+        Some(ConfigAction::SetMark) => segments.push(Segment::new("m…", None)),
+        Some(_) => segments.push(Segment::new("`…", None)),
+        None => (),
     }
     if let Some(search) = &app.search {
         segments.push(ui::match_segment(search.status()));
@@ -797,6 +828,14 @@ fn handle_key(
 
     app.message = None;
 
+    if let Some(kind) = app.pending_mark.take() {
+        app.count = None;
+        if let KeyCode::Char(c) = key.code {
+            use_mark(kind, c, viewer, app);
+        }
+        return false;
+    }
+
     if !key_matcher.is_ongoing() {
         if let Some(count) = count_digit(app.count, &key) {
             app.count = Some(count);
@@ -895,6 +934,10 @@ fn handle_key(
                 }
             }
         }
+        ConfigAction::SetMark | ConfigAction::GoToMark => {
+            key_matcher.reset();
+            app.pending_mark = Some(action);
+        }
         ConfigAction::ShowOutline => {
             key_matcher.reset();
             if app.toc.entries.is_empty() {
@@ -924,6 +967,34 @@ fn handle_key(
     }
 
     false
+}
+
+/* Sets mark `c`, or goes to it; going to the backtick or quote mark goes back to
+ * where the last jump started, as in vim */
+fn use_mark(kind: ConfigAction, c: char, viewer: &mut Viewer, app: &mut App) {
+    if kind == ConfigAction::SetMark {
+        if c.is_ascii_lowercase() {
+            app.marks.insert(c, viewer.spot());
+            app.message = Some(format!("Mark {} set", c));
+        } else {
+            app.message = Some("Marks are the letters a to z".to_owned());
+        }
+        return;
+    }
+    if c == '`' || c == '\'' {
+        match app.jumps.back(viewer.spot()) {
+            Some(spot) => viewer.go_to_spot(spot),
+            None => app.message = Some("No jump to go back to".to_owned()),
+        }
+        return;
+    }
+    match app.marks.get(&c).copied() {
+        Some(spot) => {
+            app.jumps.record(viewer.spot());
+            viewer.go_to_spot(spot);
+        }
+        None => app.message = Some(format!("No mark {}", c)),
+    }
 }
 
 fn start_search(needle: String, renderer: &Renderer, app: &mut App) {
@@ -975,6 +1046,23 @@ fn run_command(
                     .send_and_confirm_action(RendererAction::ClearSearch)
                     .expect("Could not send action to renderer");
                 viewer.invalidate_registry();
+            }
+        }
+        Command::Marks => {
+            app.message = Some(if app.marks.is_empty() {
+                "No marks: m then a letter sets one".to_owned()
+            } else {
+                app.marks
+                    .iter()
+                    .map(|(c, spot)| format!("{} {}", c, viewer.page_label(spot.page)))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            })
+        }
+        Command::DeleteMarks(None) => app.marks.clear(),
+        Command::DeleteMarks(Some(letters)) => {
+            for c in letters.chars() {
+                app.marks.remove(&c);
             }
         }
         Command::Offset(None) => {
