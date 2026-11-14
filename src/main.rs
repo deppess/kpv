@@ -100,6 +100,8 @@ struct App {
     ruler: Option<Ruler>,
     lines: Lines,
     ruler_image: Option<RulerPlacement>,
+    /* The mouse pointer shape last sent to the terminal */
+    pointer: PointerShape,
     /* The position waiting to be written, and when */
     save_due: Option<(FileState, Instant)>,
     throttle: LastExecuted,
@@ -223,6 +225,7 @@ fn main() {
         ruler: None,
         lines: Lines::new(&arg),
         ruler_image: None,
+        pointer: PointerShape::Default,
         save_due: None,
         throttle: LastExecuted {
             alpha: SystemTime::now() - Duration::from_millis(500),
@@ -313,6 +316,7 @@ fn main() {
                         /* A reload drops the highlights; search the new version again */
                         if let Some(search) = app.search.as_mut() {
                             search.pending = true;
+                            search.follow = false;
                             renderer
                                 .send_and_confirm_action(RendererAction::Search(
                                     search.needle.clone(),
@@ -328,7 +332,8 @@ fn main() {
                             app.search.as_mut().filter(|s| s.needle == needle)
                         {
                             search.set_results(matches, viewer.page_view());
-                            show_current_match(&mut app, &mut viewer, &renderer);
+                            let follow = search.follow;
+                            show_current_match(&mut app, &mut viewer, &renderer, follow);
                         }
                     }
                 }
@@ -405,23 +410,22 @@ fn main() {
 
         schedule_save(&mut app, &viewer);
 
-        app.link = None;
+        let hovered = app.link.take();
+        let clicked = current_mouse.kind.is_down();
         let over_panel = app.mode == Mode::Toc
             && ui::over_toc(&viewport(), current_mouse.column, current_mouse.row);
         if over_panel {
             /* The panel covers the page: links under it can't be hovered or clicked */
-            execute!(io::stdout(), SetPointerShape(PointerShape::Default))
-                .expect("Could not set pointer shape");
-            if current_mouse.kind.is_down() {
+            set_pointer(&mut app, PointerShape::Default);
+            if clicked {
                 toc_click(current_mouse, &mut viewer, &mut app);
                 current_mouse.kind = MouseEventKind::Moved;
             }
         } else if let Some(link) = viewer.intersect_link(current_mouse) {
-            execute!(io::stdout(), SetPointerShape(PointerShape::Pointer))
-                .expect("Could not set pointer shape");
+            set_pointer(&mut app, PointerShape::Pointer);
 
             app.link = viewer.link_hint(&link);
-            if current_mouse.kind.is_down() {
+            if clicked {
                 /* URI points to page in this document */
                 if link.uri.starts_with('#') {
                     if let Some(destination) = &link.dest {
@@ -432,8 +436,7 @@ fn main() {
                     let _ = open::that_detached(link.uri);
                 }
 
-                execute!(io::stdout(), SetPointerShape(PointerShape::Default))
-                    .expect("Could not set pointer shape");
+                set_pointer(&mut app, PointerShape::Default);
 
                 /* Since the mouse position is saved but this loop runs on other triggers
                  * such as key press, don't allow the mouse to accidentely click on other
@@ -441,8 +444,13 @@ fn main() {
                 current_mouse.kind = MouseEventKind::Moved;
             }
         } else {
-            execute!(io::stdout(), SetPointerShape(PointerShape::Default))
-                .expect("Could not set pointer shape");
+            set_pointer(&mut app, PointerShape::Default);
+        }
+
+        /* The mouse moves all the time. Unless it clicked or changed the link hint, the
+         * screen stays as it is, and redrawing would make kitty place every page again. */
+        if index_ready == 5 && !clicked && app.link == hovered {
+            continue 'main;
         }
 
         /* ================================ Draw a frame ================================ */
@@ -558,15 +566,12 @@ fn mark_letter(name: &str) -> Option<char> {
 fn file_state(viewer: &Viewer, marks: &BTreeMap<char, Spot>) -> FileState {
     let (page, within, zoom) = viewer.position();
     FileState {
-        version: 0,
         page,
         within,
         zoom,
         page_offset: viewer.page_offset(),
-        opened: 0,
-        id: None,
-        path: None,
         marks: marks.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+        ..FileState::default()
     }
 }
 
@@ -708,13 +713,28 @@ fn toc_click(mouse: MouseEvent, viewer: &mut Viewer, app: &mut App) {
     }
 }
 
-/* Tells the renderer which match to draw in the stronger color and scrolls to it */
-fn show_current_match(app: &mut App, viewer: &mut Viewer, renderer: &Renderer) {
+/* Sends the pointer shape when it changes */
+fn set_pointer(app: &mut App, shape: PointerShape) {
+    if app.pointer != shape {
+        app.pointer = shape;
+        execute!(io::stdout(), SetPointerShape(shape))
+            .expect("Could not set pointer shape");
+    }
+}
+
+/* Tells the renderer which match to draw in the stronger color, and with `scroll`
+ * goes to it */
+fn show_current_match(
+    app: &mut App,
+    viewer: &mut Viewer,
+    renderer: &Renderer,
+    scroll: bool,
+) {
     let Some(search) = &app.search else { return };
     renderer
         .send_and_confirm_action(RendererAction::SetCurrentMatch(search.current))
         .expect("Could not send action to renderer");
-    if let Some(m) = search.current_match() {
+    if let Some(m) = search.current_match().filter(|_| scroll) {
         app.jumps.record(viewer.spot());
         viewer.jump_to(m.page, m.y, 0.25);
     }
@@ -1004,7 +1024,7 @@ fn handle_key(
             match app.search.as_mut() {
                 Some(search) if !search.matches.is_empty() => {
                     search.step(steps);
-                    show_current_match(app, viewer, renderer);
+                    show_current_match(app, viewer, renderer, true);
                 }
                 Some(search) => {
                     app.message = Some(format!("No match for {}", search.needle))
@@ -1159,13 +1179,14 @@ fn run_command(
             }
         }
         Command::Goto(label) => {
-            app.jumps.record(viewer.spot());
             if let Some(page) = viewer.find_label(&label) {
+                app.jumps.record(viewer.spot());
                 let _ = viewer.jump(page);
             } else {
                 match label.parse::<usize>() {
                     /* No page is printed with that number; take it as a position */
                     Ok(page) if page >= 1 && page <= viewer.pages() => {
+                        app.jumps.record(viewer.spot());
                         let _ = viewer.jump(page - 1);
                         app.message = Some(format!(
                             "No printed page {}, went to page #{}",

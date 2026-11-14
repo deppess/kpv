@@ -386,12 +386,7 @@ impl Viewer {
         if page >= self.cumulative_heights.len() {
             return;
         }
-        let page_top = if page == 0 {
-            0.0
-        } else {
-            self.cumulative_heights[page - 1]
-        };
-        self.offset.1 = page_top + y - viewport().height() * at / self.scale;
+        self.offset.1 = self.page_top(page) + y - viewport().height() * at / self.scale;
         self.bound_viewer();
     }
 
@@ -419,12 +414,7 @@ impl Viewer {
         }
         let at = self.offset.1 + viewport().height() * READING_AT / self.scale;
         let page = self.offset2page(at).min(self.pages() - 1);
-        let page_top = if page == 0 {
-            0.0
-        } else {
-            self.cumulative_heights[page - 1]
-        };
-        (page, at - page_top)
+        (page, at - self.page_top(page))
     }
 
     pub fn page_first(&self) -> usize {

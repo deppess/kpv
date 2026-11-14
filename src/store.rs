@@ -14,8 +14,9 @@ use crate::{jumps::Spot, CONFIG_FILENAME};
 const VERSION: u32 = 1;
 
 /* What is remembered about one document. The position is relative to pages and to
- * the fit-width zoom, so it comes back right in a terminal of another size. */
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+ * the fit-width zoom, so it comes back right in a terminal of another size. The
+ * version, the time and the keys are filled in when it is saved. */
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct FileState {
     pub version: u32,
     /* The page at the top of the viewport, 0-indexed */
@@ -188,15 +189,10 @@ mod tests {
 
     fn state(page: usize) -> FileState {
         FileState {
-            version: VERSION,
             page,
             within: 0.25,
             zoom: 1.5,
-            page_offset: 0,
-            opened: 0,
-            id: None,
-            path: None,
-            marks: BTreeMap::new(),
+            ..FileState::default()
         }
     }
 

@@ -22,6 +22,9 @@ pub struct SearchState {
     pub current: Option<usize>,
     /* Waiting for the renderer's results */
     pub pending: bool,
+    /* Scroll to the first match when the results come. A search run again after the
+     * file reloads only refreshes the highlights. */
+    pub follow: bool,
 }
 
 impl SearchState {
@@ -31,6 +34,7 @@ impl SearchState {
             matches: Vec::new(),
             current: None,
             pending: true,
+            follow: true,
         }
     }
 
