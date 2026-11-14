@@ -69,11 +69,12 @@ pub enum ConfigAction {
     JumpForward,
     SetMark,
     GoToMark,
+    ToggleRuler,
 }
 
 impl ConfigAction {
     /* Every action in the order the help overlay lists them */
-    pub const ALL: [ConfigAction; 25] = [
+    pub const ALL: [ConfigAction; 26] = [
         ConfigAction::MoveDown,
         ConfigAction::MoveUp,
         ConfigAction::MoveLeft,
@@ -95,6 +96,7 @@ impl ConfigAction {
         ConfigAction::ZoomIn,
         ConfigAction::ZoomOut,
         ConfigAction::CenterViewer,
+        ConfigAction::ToggleRuler,
         ConfigAction::ToggleInverse,
         ConfigAction::ToggleAlpha,
         ConfigAction::ShowHelp,
@@ -129,6 +131,9 @@ impl ConfigAction {
             ConfigAction::ZoomOut => "Zoom out",
             ConfigAction::CenterViewer => "Center the page",
             ConfigAction::ToggleInverse => "Invert colors",
+            ConfigAction::ToggleRuler => {
+                "Reading ruler: j and k then move it line by line"
+            }
             ConfigAction::ToggleAlpha => "Transparent page background",
             ConfigAction::ShowHelp => "Show this list",
             ConfigAction::Quit => "Quit",

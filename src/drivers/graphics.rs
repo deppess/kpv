@@ -113,12 +113,10 @@ pub fn terminal_graphics_display_image(
 
     write!(handle, "\x1B[s\x1B[{};{}H", row, col).unwrap();
 
-    /* Z-index < -1,073,741,824 will make the images to be drawn behind
-     * cells with colored background */
     write!(
         handle,
-        "\x1B_Gz=-1073741825,a=p,C=1,i={},x={},y={},w={},h={},c={},r={};\x1B\\",
-        id, rect.0, rect.1, rect.2, rect.3, c, r
+        "\x1B_Gz={},a=p,C=1,i={},x={},y={},w={},h={},c={},r={};\x1B\\",
+        PAGE_Z, id, rect.0, rect.1, rect.2, rect.3, c, r
     )
     .unwrap();
 
@@ -129,6 +127,35 @@ pub fn terminal_graphics_display_image(
         .map_err(|x: std::io::Error| format!("Could not flush stdout: {}", x))?;
 
     Ok(())
+}
+
+/* Images at a z-index below -1,073,741,824 are drawn behind cells with a colored
+ * background, which lets the contents panel cover them. Pages sit one below the
+ * ruler, so the ruler is drawn over them. */
+const PAGE_Z: i64 = -1_073_741_826;
+const RULER_Z: i64 = -1_073_741_825;
+
+/* The ruler's image ID; page images count up from 1 and never get this far */
+pub const RULER_ID: usize = 0x7FFF_0001;
+
+/* Shows the ruler image over `cols` x `rows` cells from a 1-indexed cell. Quiet, so
+ * no answer gets mixed up with the answers for pages. */
+pub fn terminal_graphics_place_ruler(
+    col: usize,
+    row: usize,
+    cols: usize,
+    rows: usize,
+) -> Result<(), String> {
+    let mut handle = stdout().lock();
+    write!(
+        handle,
+        "\x1B[s\x1B[{};{}H\x1B_Gq=2,z={},a=p,C=1,i={},c={},r={};\x1B\\\x1B[u",
+        row, col, RULER_Z, RULER_ID, cols, rows
+    )
+    .unwrap();
+    handle
+        .flush()
+        .map_err(|x: std::io::Error| format!("Could not flush stdout: {}", x))
 }
 
 /* A structure which extracts the Kitty graphics response in a lazy way */

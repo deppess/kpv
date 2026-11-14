@@ -53,6 +53,7 @@ enabled = true
 "`" = "GoToMark"
 "'" = "GoToMark"
 "C" = "CenterViewer"
+"r" = "ToggleRuler"
 "h" = "MoveLeft"
 "j" = "MoveDown"
 "k" = "MoveUp"

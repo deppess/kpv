@@ -30,6 +30,9 @@ mod outline;
 mod jumps;
 use crate::jumps::{Jumps, Spot};
 
+mod ruler;
+use crate::ruler::{Lines, Ruler};
+
 mod store;
 use crate::store::{FileState, Store};
 
@@ -92,6 +95,11 @@ struct App {
     marks: BTreeMap<char, Spot>,
     /* `m` or a backtick was typed and waits for its letter */
     pending_mark: Option<ConfigAction>,
+    /* The reading ruler when it's on, the text rows it steps through, and the image
+     * last sent for it */
+    ruler: Option<Ruler>,
+    lines: Lines,
+    ruler_image: Option<RulerPlacement>,
     /* The position waiting to be written, and when */
     save_due: Option<(FileState, Instant)>,
     throttle: LastExecuted,
@@ -212,6 +220,9 @@ fn main() {
         jumps: Jumps::default(),
         marks: BTreeMap::new(),
         pending_mark: None,
+        ruler: None,
+        lines: Lines::new(&arg),
+        ruler_image: None,
         save_due: None,
         throttle: LastExecuted {
             alpha: SystemTime::now() - Duration::from_millis(500),
@@ -282,6 +293,15 @@ fn main() {
                             app.store = open_store(&arg, id, &mut viewer, &mut app.marks);
                         } else if let Some(store) = app.store.as_mut() {
                             store.set_id(id);
+                        }
+                        /* The text may have moved; keep the ruler only where it fits */
+                        app.lines.reset();
+                        if let Some(r) = app.ruler {
+                            if r.page >= viewer.pages()
+                                || r.row >= app.lines.rows(r.page).len()
+                            {
+                                app.ruler = None;
+                            }
                         }
                         result_receiver.clear_priority(1);
 
@@ -451,6 +471,10 @@ fn main() {
                 .display_pages(&renderer)
                 .expect("Could not display pages")
         };
+
+        if !matches!(app.mode, Mode::Help { .. }) {
+            draw_ruler(&mut app, &viewer);
+        }
 
         let (page, y) = viewer.reading_spot();
         let section = current_section(&app.toc.entries, page, y);
@@ -855,6 +879,26 @@ fn handle_key(
     let speed = config.viewer.scroll_speed * times as f32;
 
     match action {
+        ConfigAction::MoveUp | ConfigAction::MoveDown if app.ruler.is_some() => {
+            let delta = if action == ConfigAction::MoveDown {
+                times as isize
+            } else {
+                -(times as isize)
+            };
+            move_ruler(delta, viewer, app);
+        }
+        ConfigAction::ToggleRuler => {
+            if app.ruler.take().is_none() {
+                let (page, y) = viewer.top_of_view();
+                let pages = viewer.pages();
+                let lines = &mut app.lines;
+                app.ruler = ruler::first_from(page, y, pages, |p| lines.rows(p).to_vec());
+                match app.ruler {
+                    Some(_) => keep_ruler_in_view(viewer, app),
+                    None => app.message = Some("No text to follow from here".to_owned()),
+                }
+            }
+        }
         ConfigAction::MoveUp => viewer.scroll((0.0f32, -speed)),
         ConfigAction::MoveDown => viewer.scroll((0.0f32, speed)),
         ConfigAction::MoveLeft => viewer.scroll((-speed, 0.0f32)),
@@ -967,6 +1011,94 @@ fn handle_key(
     }
 
     false
+}
+
+/* The ruler's band in viewport pixels, when its page is on screen */
+fn ruler_band(app: &mut App, viewer: &Viewer) -> Option<(f64, f64, f64, f64)> {
+    /* A little air above and below the letters */
+    const PAD: f64 = 2.0;
+    let r = app.ruler?;
+    let rect = viewer.page_rect(r.page)?;
+    let row = *app.lines.rows(r.page).get(r.row)?;
+    let scale = viewer.pixels_per_unit() as f64;
+    Some((
+        rect.x as f64,
+        rect.y as f64 + row.top as f64 * scale - PAD,
+        rect.width as f64,
+        (row.bottom - row.top) as f64 * scale + 2.0 * PAD,
+    ))
+}
+
+/* Scrolls when the ruler's line is off screen or near an edge */
+fn keep_ruler_in_view(viewer: &mut Viewer, app: &mut App) {
+    let Some(r) = app.ruler else { return };
+    let height = viewport().height() as f64;
+    let shown = ruler_band(app, viewer)
+        .is_some_and(|(_, y, _, h)| y >= height * 0.05 && y + h <= height * 0.85);
+    if !shown {
+        if let Some(row) = app.lines.rows(r.page).get(r.row).copied() {
+            viewer.jump_to(r.page, row.top, 0.3);
+        }
+    }
+}
+
+fn move_ruler(delta: isize, viewer: &mut Viewer, app: &mut App) {
+    let Some(from) = app.ruler else { return };
+    let pages = viewer.pages();
+    /* Scrolled away from the ruler: pick it up at the top of the view */
+    let from = if ruler_band(app, viewer).is_some() {
+        Some(from)
+    } else {
+        let (page, y) = viewer.top_of_view();
+        let lines = &mut app.lines;
+        ruler::first_from(page, y, pages, |p| lines.rows(p).to_vec())
+    };
+    let lines = &mut app.lines;
+    match from.and_then(|f| ruler::step(f, delta, pages, |p| lines.rows(p).len())) {
+        Some(to) => app.ruler = Some(to),
+        None => {
+            app.message = Some(
+                if delta > 0 {
+                    "End of the text"
+                } else {
+                    "Start of the text"
+                }
+                .to_owned(),
+            )
+        }
+    }
+    keep_ruler_in_view(viewer, app);
+}
+
+/* Lays the ruler over its line; the image is sent again only when it changes */
+fn draw_ruler(app: &mut App, viewer: &Viewer) {
+    const COLOR: [u8; 4] = [90, 160, 255, 70];
+    let Some(placement) =
+        ruler_band(app, viewer).and_then(|b| ruler_placement(b, &viewport()))
+    else {
+        return;
+    };
+    if app.ruler_image.as_ref() != Some(&placement) {
+        let data = ruler_bitmap(&placement, COLOR);
+        if drivers::graphics::terminal_graphics_transfer_bitmap(
+            drivers::graphics::RULER_ID,
+            placement.width,
+            placement.height,
+            &data,
+            true,
+        )
+        .is_err()
+        {
+            return;
+        }
+        app.ruler_image = Some(placement.clone());
+    }
+    let _ = drivers::graphics::terminal_graphics_place_ruler(
+        placement.col,
+        placement.row,
+        placement.cols,
+        placement.rows,
+    );
 }
 
 /* Sets mark `c`, or goes to it; going to the backtick or quote mark goes back to

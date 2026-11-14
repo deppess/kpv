@@ -36,6 +36,7 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 | `Backspace`, `Esc`, `:noh` | Clear the search |
 | `+` / `-` | Zoom in / out |
 | `C` | Center the page |
+| `r` | Reading ruler on / off |
 | `Ctrl-r` | Invert colors |
 | `Ctrl-a` | Transparent page background |
 | `?` | List every key from your config; `j`/`k`, `d`/`u`, `g`/`G` scroll, `q` closes |
@@ -48,6 +49,10 @@ Jumps are page jumps (`gg`, `G`, `:`), marks, links, table of contents entries a
 A number before a key repeats it: `3 Ctrl-f` moves three pages, and `5j` moves five steps. In a `:` or `/` prompt, `Esc` or backspacing past the start cancels, and `Ctrl-u` clears the line.
 
 Page numbers follow the book. When the PDF carries printed page numbers (roman numerals for the front matter, a restart at chapter one, prefixes like `A-3`), the status bar shows them as `xiv (14/412)`: the printed number, then the position in the file. A `:` number that no page is printed with goes to that position instead, and the status bar says so. For a scan without printed page numbers, `:offset 12` makes the 13th page printed page 1, and `:offset` shows the current offset. Clicking a link opens it, or jumps to the spot it points to when it points into the document.
+
+## Reading ruler
+
+`r` lays a light blue band over the first line of text in view. While it's on, `j` and `k` move it a line down or up (`5j` five lines), on across pages, scrolling when the line nears an edge of the window. Lines side by side, as in two columns, count as one. Other keys and the mouse wheel scroll as usual, and the next `j` or `k` picks the ruler up again at the top of the view. Pages without text, such as scans, have no lines to follow.
 
 ## Remembered position
 
@@ -83,7 +88,7 @@ The config is created on first run at `~/Library/Application Support/viewmer/con
 - `[viewer]`: scroll speed, render precision, memory limit, zoom step and minimum, page gap, preloaded pages, scroll direction.
 - `[viewer.uri_hint]`: `enabled` shows where a hovered link points.
 - `[state]`: `enabled` remembers the position and marks of every file.
-- `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `SetMark`, `GoToMark`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `ZoomIn`, `ZoomOut`, `CenterViewer`, `ToggleInverse`, `ToggleAlpha`, `ShowHelp` and `Quit`.
+- `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `SetMark`, `GoToMark`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `ZoomIn`, `ZoomOut`, `CenterViewer`, `ToggleRuler`, `ToggleInverse`, `ToggleAlpha`, `ShowHelp` and `Quit`.
 
 ## Using it from yazi
 
@@ -109,7 +114,7 @@ cargo clippy --all-features -- -D clippy::all
 cargo test --all-features -- --test-threads 1
 ```
 
-The tests cover the page placement and clipping math, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, moving retired default keys, key and prompt handling, search stepping, the help list, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
+The tests cover the page placement and clipping math, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, moving retired default keys, key and prompt handling, search stepping, the help list, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
 
 ## License
 

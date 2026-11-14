@@ -238,6 +238,28 @@ impl Viewer {
         (page, within, self.scale / self.fit_scale)
     }
 
+    /* Where `page` is drawn, in viewport pixels, when it's on screen */
+    pub fn page_rect(&self, page: usize) -> Option<DisplayRect> {
+        self.calculate_display_bounds()
+            .into_iter()
+            .find(|(p, _)| *p == page)
+            .map(|(_, rect)| rect)
+    }
+
+    /* Viewport pixels per page unit */
+    pub fn pixels_per_unit(&self) -> f32 {
+        self.scale
+    }
+
+    /* The page at the viewport's top edge and the spot on it there */
+    pub fn top_of_view(&self) -> (usize, f32) {
+        if self.cumulative_heights.is_empty() {
+            return (0, 0.0);
+        }
+        let page = self.page_first.min(self.pages() - 1);
+        (page, self.offset.1 - self.page_top(page))
+    }
+
     pub fn spot(&self) -> Spot {
         let (page, within, _) = self.position();
         Spot { page, within }
