@@ -29,6 +29,7 @@ crossterm = { git = "https://github.com/monoamine11231/crossterm-apc.git" }
 
 [profile.release]
 panic = "abort"
+strip = true
 
 [profile.dev]
 panic = "abort"
