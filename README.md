@@ -85,7 +85,7 @@ Search ignores case. All matches are highlighted in yellow, the current one in o
 
 ## Configuration
 
-The config is created on first run at `~/Library/Application Support/viewmer/config.toml` (macOS) or `~/.config/viewmer/config.toml` (Linux), with a line about each setting:
+The config is created on first run at `~/.config/viewmer/config.toml` (or under `$XDG_CONFIG_HOME` when that is set), with a line about each setting. A config and theme from earlier versions, kept in `~/Library/Application Support/viewmer` on macOS, move there on their own:
 
 - `[viewer]`: `scroll_step`, `zoom_step` (percent of the page width), `sharpness` (how finely pages are drawn), `page_gap`, `invert_wheel`, `link_hints` (where a hovered link points) and `remember_position`.
 - `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `SetMark`, `GoToMark`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `HalfPageDown`, `HalfPageUp`, `ZoomIn`, `ZoomOut`, `FitWidth`, `FitPage`, `CenterViewer`, `ToggleRuler`, `ToggleInverse`, `ToggleAlpha`, `ShowHelp` and `Quit`.

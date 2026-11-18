@@ -1,12 +1,12 @@
 use std::{
     collections::{HashMap, HashSet},
     mem::discriminant,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use toml::{Table, Value};
 
-use dirs::config_dir;
+use dirs::{config_dir, home_dir};
 use keybinds::Keybinds;
 use serde::Deserialize;
 
@@ -263,14 +263,37 @@ fn fix_config_toml(
     Ok(config_has_changed)
 }
 
-/* The folder with config.toml and theme.toml, made if it isn't there */
+/* The folder with config.toml and theme.toml: `~/.config/viewmer` on every system, or
+ * under $XDG_CONFIG_HOME when that's set. Made if it isn't there. */
 pub fn config_folder() -> Result<PathBuf, String> {
-    let mut folder =
-        config_dir().ok_or("Incompatible OS: No config directory has been found")?;
-    folder.push(CONFIG_FILENAME);
+    let base = match std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+        Some(base) => PathBuf::from(base),
+        None => home_dir()
+            .ok_or("Could not find the home folder")?
+            .join(".config"),
+    };
+    let folder = base.join(CONFIG_FILENAME);
     std::fs::create_dir_all(folder.as_path())
-        .map_err(|x| format!("Could not create config directory: {}", x))?;
+        .map_err(|x| format!("Could not create {}: {}", folder.display(), x))?;
+    if let Some(old) = config_dir().map(|d| d.join(CONFIG_FILENAME)) {
+        move_old_files(&old, &folder);
+    }
     Ok(folder)
+}
+
+/* Earlier versions kept the config and theme in the system's own config folder, which
+ * on macOS is ~/Library/Application Support. They move over once; a file already in
+ * the new place wins. */
+fn move_old_files(old: &Path, folder: &Path) {
+    if old == folder {
+        return;
+    }
+    for name in ["config.toml", "theme.toml"] {
+        let (from, to) = (old.join(name), folder.join(name));
+        if from.is_file() && !to.exists() {
+            let _ = std::fs::rename(&from, &to);
+        }
+    }
 }
 
 /* Settings that later versions renamed or moved: the old place and the new key in
@@ -1868,5 +1891,28 @@ enabled = true
         assert_eq!(upgrade(&text).unwrap(), None);
         let config: Config = toml::from_str(&text).unwrap();
         assert_eq!(config.viewer.sharpness, 2.0);
+    }
+
+    #[test]
+    fn old_files_move_once_and_never_over_new_ones() {
+        let root =
+            std::env::temp_dir().join(format!("viewmer-move-{}", std::process::id()));
+        let (old, new) = (root.join("old"), root.join("new"));
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(old.join("config.toml"), "old config").unwrap();
+        std::fs::write(old.join("theme.toml"), "old theme").unwrap();
+        std::fs::write(new.join("theme.toml"), "new theme").unwrap();
+
+        move_old_files(&old, &new);
+        let read = |p: PathBuf| std::fs::read_to_string(p).unwrap();
+        assert_eq!(read(new.join("config.toml")), "old config");
+        assert_eq!(read(new.join("theme.toml")), "new theme");
+        assert!(!old.join("config.toml").exists());
+        assert!(
+            old.join("theme.toml").exists(),
+            "a file that wasn't moved stays"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
