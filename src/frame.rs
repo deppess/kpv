@@ -437,7 +437,7 @@ pub fn check_placements(
 
         /* Place everything again next frame, once the page is sent again */
         app.shown = None;
-        if !viewer.schedule_transfer(page) {
+        if !viewer.render_again(page) {
             app.message = Some(format!(
                 "kitty rejects page {}: {}",
                 page + 1,

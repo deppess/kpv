@@ -1,7 +1,7 @@
 use core::f32;
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, RwLock},
+    sync::{atomic::Ordering, Arc, RwLock},
 };
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -9,7 +9,7 @@ use crossterm::event::MouseEvent;
 use mupdf::{link::LinkDestination, DestinationKind, Link};
 
 use crate::{
-    globals::CONFIG,
+    globals::{CONFIG, RENDER_SCALE},
     image::{Image, PagePlacement},
     jumps::Spot,
     labels,
@@ -19,10 +19,11 @@ use crate::{
 
 /* The smallest zoom, in pixels per page unit; the image padding is worked out for it */
 pub const SCALE_MIN: f32 = 0.2;
-/* How much memory the page images may take before the oldest are dropped */
-const MEMORY_LIMIT: usize = 300 << 20;
+/* How much memory the page images may take in kitty before the oldest are dropped,
+ * below the 320 MB kitty keeps for images */
+const MEMORY_LIMIT: usize = 280 << 20;
 /* Pages kept ready before and after the ones in view */
-const PAGES_PRELOADED: usize = 3;
+const PAGES_PRELOADED: usize = 2;
 
 #[derive(Clone, Copy, Debug)]
 pub struct DisplayRect {
@@ -150,7 +151,8 @@ pub struct Viewer {
 
     pub images: HashMap<usize, Arc<RwLock<Image>>>,
     invalidated: HashMap<usize, ()>,
-    scheduled4render: HashMap<usize, ()>,
+    /* Pages asked for and the scale they were asked at */
+    scheduled4render: HashMap<usize, f32>,
     memory_used: usize,
     last_rendered: VecDeque<usize>,
     /* Failed placements in a row, per page */
@@ -290,6 +292,12 @@ impl Viewer {
     /* Viewport pixels per page unit */
     pub fn pixels_per_unit(&self) -> f32 {
         self.scale
+    }
+
+    /* The scale pages are rendered at: one image pixel to a screen pixel at this zoom,
+     * times the `resolution` setting */
+    pub fn render_scale(&self) -> f32 {
+        self.scale * CONFIG.get().unwrap().viewer.resolution
     }
 
     /* The page at the viewport's top edge and the spot on it there */
@@ -627,9 +635,17 @@ impl Viewer {
         self.memory_used += image.read().unwrap().size();
         self.last_rendered.push_back(page);
 
+        /* An image for an older zoom stands in, but the request for the new one stays */
+        let scale = image.read().unwrap().scale();
+        if self
+            .scheduled4render
+            .get(&page)
+            .is_some_and(|asked| same_scale(*asked, scale))
+        {
+            self.scheduled4render.remove(&page);
+        }
         self.images.insert(page, image);
         self.failures.remove(&page);
-        self.scheduled4render.remove(&page);
 
         while self.memory_used >= MEMORY_LIMIT {
             let Some(oldest) = self.last_rendered.pop_front() else {
@@ -660,13 +676,25 @@ impl Viewer {
         rect: Option<DisplayRect>,
         renderer: &Renderer,
     ) -> Option<PagePlacement> {
-        let stale =
-            !self.images.contains_key(&page) || self.invalidated.contains_key(&page);
+        let scale = self.render_scale();
+        let stale = match self.images.get(&page) {
+            None => true,
+            Some(image) => {
+                self.invalidated.contains_key(&page)
+                    || !same_scale(image.read().unwrap().scale(), scale)
+            }
+        };
+        let asked = self
+            .scheduled4render
+            .get(&page)
+            .is_some_and(|asked| same_scale(*asked, scale));
         if stale
-            && !self.scheduled4render.contains_key(&page)
-            && renderer.send_action(RendererAction::Display(page)).is_ok()
+            && !asked
+            && renderer
+                .send_action(RendererAction::Display(page, scale))
+                .is_ok()
         {
-            self.scheduled4render.insert(page, ());
+            self.scheduled4render.insert(page, scale);
         }
 
         let image = self.images.get(&page)?.read().unwrap();
@@ -684,6 +712,7 @@ impl Viewer {
     /* The page images a frame shows: the pages in view, and a few before and after
      * them kept ready so that scrolling doesn't show blank pages */
     pub fn plan_pages(&mut self, renderer: &Renderer) -> Vec<PagePlacement> {
+        RENDER_SCALE.store(self.render_scale().to_bits(), Ordering::Release);
         let preloaded = PAGES_PRELOADED;
         let mut plan = Vec::new();
 
@@ -710,10 +739,10 @@ impl Viewer {
         plan
     }
 
-    /* Sends a page image again after kitty failed to place it. Gives up after a few
+    /* Renders a page again after kitty no longer had its image. Gives up after a few
      * failures in a row so a terminal that keeps refusing can't cause an endless
      * redraw loop; `false` means it gave up. */
-    pub fn schedule_transfer(&mut self, page: usize) -> bool {
+    pub fn render_again(&mut self, page: usize) -> bool {
         const MAX_RETRIES: usize = 3;
 
         let failures = self.failures.entry(page).or_insert(0);
@@ -721,10 +750,10 @@ impl Viewer {
         if *failures > MAX_RETRIES {
             return false;
         }
-        let Some(image) = self.images.get(&page).cloned() else {
-            return true;
-        };
-        let _ = image.read().unwrap().transfer();
+        let failures = *failures;
+        self.remove_image(page);
+        self.scheduled4render.remove(&page);
+        self.failures.insert(page, failures);
         let _ = self.sender_rerender.send(());
         true
     }
@@ -732,6 +761,11 @@ impl Viewer {
     pub fn placement_ok(&mut self, page: usize) {
         self.failures.remove(&page);
     }
+}
+
+/* Two scales are the same when they'd give the same pixels */
+fn same_scale(a: f32, b: f32) -> bool {
+    (a - b).abs() <= b.abs() * 1e-3
 }
 
 #[cfg(test)]

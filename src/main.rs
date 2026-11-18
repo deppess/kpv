@@ -37,7 +37,7 @@ use crossterm::event::{
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, window_size, Clear, ClearType,
-    EnterAlternateScreen, LeaveAlternateScreen, WindowSize,
+    EnterAlternateScreen, LeaveAlternateScreen,
 };
 use keybinds::{Keybinds, Mods};
 
@@ -163,28 +163,10 @@ fn main() {
         Err(e) => vec![e],
     };
 
-    /* ======================= Calculate padding for all images ====================== */
-    let winsize_tmp = window_size()
+    /* ============================ The window's size ============================ */
+    let winsize = window_size()
         .unwrap_or_else(|e| fail(&format!("Could not read the window size: {}", e)));
-    let winsize = WindowSize {
-        rows: winsize_tmp.rows,
-        columns: winsize_tmp.columns,
-        width: winsize_tmp.width,
-        height: winsize_tmp.height,
-    };
-    TERMINAL_SIZE.get_or_init(|| RwLock::new(winsize_tmp));
-
-    let config = CONFIG.get().unwrap();
-
-    let pxpercol = winsize.width as f64 / winsize.columns as f64;
-    let pxperrow = winsize.height as f64 / winsize.rows as f64;
-
-    let paddingcol =
-        (pxpercol * config.viewer.sharpness / SCALE_MIN as f64).ceil() as usize;
-    let paddingrow =
-        (pxperrow * config.viewer.sharpness / SCALE_MIN as f64).ceil() as usize;
-
-    IMAGE_PADDING.get_or_init(|| std::cmp::max(paddingcol, paddingrow));
+    TERMINAL_SIZE.get_or_init(|| RwLock::new(winsize));
 
     /* =========== Generate a random ID which is unique for every instance =========== */
     let random_u64 = RandomState::new().build_hasher().finish();

@@ -1,7 +1,10 @@
 use crate::{config::Config, drivers::graphics::GraphicsResponse};
 use crossbeam_channel::Receiver;
 use crossterm::terminal::WindowSize;
-use std::sync::{atomic::AtomicBool, Mutex, OnceLock, RwLock};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU32},
+    Mutex, OnceLock, RwLock,
+};
 
 pub const HELP_MSG: &str = r#"viewmer: kitty terminal PDF viewer
 
@@ -22,9 +25,9 @@ pub const DEFAULT_CONFIG: &str = r#"# viewmer settings. Colors are in theme.toml
 scroll_step = 20
 # How much + and - zoom, in percent of the page width
 zoom_step = 10
-# How finely pages are drawn. 1.5 suits most screens; 2 or 3 is sharper on
-# high-resolution screens and when zoomed in, but slower and uses more memory
-sharpness = 1.5
+# Pages are drawn at the screen's own resolution, times this. 1 is as sharp as
+# the screen; less is faster and lighter
+resolution = 1
 # Space between pages
 page_gap = 10
 # Turn the mouse wheel's direction around
@@ -105,7 +108,9 @@ width = 45
 pub static CONFIG: OnceLock<Config> = OnceLock::new();
 pub static RECEIVER_GR: OnceLock<Mutex<Receiver<GraphicsResponse>>> = OnceLock::new();
 pub static TERMINAL_SIZE: OnceLock<RwLock<WindowSize>> = OnceLock::new();
-pub static IMAGE_PADDING: OnceLock<usize> = OnceLock::new();
+/* The scale pages are wanted at now, as f32 bits: the renderer skips requests for
+ * another, which a newer zoom has replaced */
+pub static RENDER_SCALE: AtomicU32 = AtomicU32::new(0);
 pub static SOFTWARE_ID: OnceLock<String> = OnceLock::new();
 pub static RUNNING: AtomicBool = AtomicBool::new(true);
 

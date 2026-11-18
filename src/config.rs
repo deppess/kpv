@@ -37,7 +37,7 @@ pub struct ConfigViewer {
     pub scroll_step: f32,
     /* Percent of the page width */
     pub zoom_step: f32,
-    pub sharpness: f64,
+    pub resolution: f32,
     pub page_gap: f32,
     pub invert_wheel: bool,
     pub link_hints: bool,
@@ -343,9 +343,8 @@ fn move_old_files(old: &Path, folder: &Path) {
 
 /* Settings that later versions renamed or moved: the old place and the new key in
  * [viewer]. Their values carry over. */
-const RENAMED: [(&[&str], &str); 6] = [
+const RENAMED: [(&[&str], &str); 5] = [
     (&["viewer", "scroll_speed"], "scroll_step"),
-    (&["viewer", "render_precision"], "sharpness"),
     (&["viewer", "margin_bottom"], "page_gap"),
     (&["viewer", "inverse_scroll"], "invert_wheel"),
     (&["viewer", "uri_hint", "enabled"], "link_hints"),
@@ -504,7 +503,7 @@ pub fn config_load_or_create() -> Result<Config, String> {
     for (name, ok) in [
         ("scroll_step", viewer.scroll_step > 0.0),
         ("zoom_step", viewer.zoom_step > 0.0),
-        ("sharpness", viewer.sharpness > 0.0),
+        ("resolution", viewer.resolution > 0.0),
         ("page_gap", viewer.page_gap >= 0.0),
     ] {
         if !ok {
@@ -1894,7 +1893,6 @@ enabled = true
             /* A renamed setting comes with its new explanation */
             "# How far one step of j, k, the arrows or the mouse wheel moves\nscroll_step",
             "scroll_step = 35.0",
-            "sharpness = 2.0",
             "page_gap = 4.0",
             "invert_wheel = true",
             "link_hints = false",
@@ -1910,6 +1908,8 @@ enabled = true
             "pages_preloaded",
             "uri_hint",
             "[state]",
+            "render_precision",
+            "sharpness",
         ] {
             assert!(!new.contains(gone), "{:?} left in\n{}", gone, new);
         }
@@ -1932,10 +1932,10 @@ enabled = true
 
     #[test]
     fn whole_numbers_are_fine_where_fractions_are_expected() {
-        let text = DEFAULT_CONFIG.replace("sharpness = 1.5", "sharpness = 2");
+        let text = DEFAULT_CONFIG.replace("resolution = 1", "resolution = 2");
         assert_eq!(upgrade(&text).unwrap(), None);
         let config: Config = toml::from_str(&text).unwrap();
-        assert_eq!(config.viewer.sharpness, 2.0);
+        assert_eq!(config.viewer.resolution, 2.0);
     }
 
     #[test]

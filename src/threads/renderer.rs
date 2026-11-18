@@ -10,7 +10,7 @@ use mupdf::{Colorspace, Document, Link, Matrix, MetadataName, Page, Quad};
 use crate::{
     config::Config,
     drivers::priority_channel::{unbounded_priority, PriorityReceiver, PrioritySender},
-    globals::{CONFIG, RUNNING},
+    globals::{CONFIG, RENDER_SCALE, RUNNING},
     image::{invert_pixels, Image},
     labels,
     outline::{self, OutlineEntry},
@@ -21,7 +21,8 @@ use crate::{
 #[derive(Clone, PartialEq)]
 pub enum RendererAction {
     Load,
-    Display(usize),
+    /* A page at a scale, in pixels per page unit */
+    Display(usize, f32),
     ToggleInverse,
     ToggleAlpha,
     Search(String),
@@ -79,7 +80,6 @@ struct RendererInnerState<'a> {
     pub inverse: bool,
 
     pub cs: Colorspace,
-    pub ctm: Matrix,
 }
 
 impl<'a> RendererInnerState<'a> {
@@ -98,10 +98,6 @@ impl<'a> RendererInnerState<'a> {
             alpha: false,
             inverse: false,
             cs: Colorspace::device_rgb(),
-            ctm: Matrix::new_scale(
-                config.viewer.sharpness as f32,
-                config.viewer.sharpness as f32,
-            ),
         };
 
         Ok(inner_state)
@@ -210,7 +206,7 @@ impl RendererInnerState<'_> {
     }
 
     /* Paints the search hits of `page` onto its bitmap */
-    fn highlight(&self, page: usize, pixmap: &mut mupdf::Pixmap) {
+    fn highlight(&self, page: usize, pixmap: &mut mupdf::Pixmap, scale: f32) {
         /* Without its own opacity a color is mixed in at this much, out of 255 */
         const STRENGTH: u8 = 110;
         let (hit, current) = (
@@ -218,7 +214,6 @@ impl RendererInnerState<'_> {
             page_color(Slot::PagesCurrentMatch, [255, 120, 0], STRENGTH),
         );
 
-        let scale = self.config.viewer.sharpness as f32;
         let (origin_x, origin_y) = (pixmap.x(), pixmap.y());
         let (width, height) = (pixmap.width() as i32, pixmap.height() as i32);
         let n = pixmap.n() as usize;
@@ -259,6 +254,16 @@ impl RendererInnerState<'_> {
 pub fn page_color(slot: Slot, fallback: [u8; 3], strength: u8) -> ([u8; 3], u8) {
     let p = paint(slot);
     (p.rgb().unwrap_or(fallback), p.alpha().unwrap_or(strength))
+}
+
+/* The most pixels a page image may have: about 96 MB */
+const MAX_PIXELS: f32 = 24_000_000.0;
+
+/* Clear pixels around a page image: two cells, so that while a page waits for its
+ * image at a new zoom, the old one can still be cut at whole cells */
+fn padding() -> usize {
+    let vp = crate::ui::inner();
+    (2.0 * vp.pxpercol.max(vp.pxperrow)).ceil() as usize
 }
 
 fn quad_bounds(quad: &Quad) -> mupdf::Rect {
@@ -317,126 +322,141 @@ impl Renderer {
         let general_server_sender = self.general_server_sender.clone();
         let result_server_sender = self.result_server_sender.clone();
 
-        let thread_render =
-            thread::spawn(move || {
-                let priority_server_receiver = priority_server_receiver;
-                let general_server_sender = general_server_sender;
-                let result_server_sender = result_server_sender;
+        let thread_render = thread::spawn(move || {
+            let priority_server_receiver = priority_server_receiver;
+            let general_server_sender = general_server_sender;
+            let result_server_sender = result_server_sender;
 
-                let mut state = RendererInnerState::new(file_string)?;
+            let mut state = RendererInnerState::new(file_string)?;
 
-                let mut sel = priority_server_receiver.construct_biased_select();
+            let mut sel = priority_server_receiver.construct_biased_select();
 
-                while RUNNING.load(Ordering::Acquire) {
-                    let action = priority_server_receiver
-                        .recv_priority(sel.ready())
-                        .map_err(|x| format!("Could not receive from client: {}", x))?;
+            while RUNNING.load(Ordering::Acquire) {
+                let action = priority_server_receiver
+                    .recv_priority(sel.ready())
+                    .map_err(|x| format!("Could not receive from client: {}", x))?;
 
-                    match action {
-                        RendererAction::Display(_) => (),
-                        _ => {
-                            general_server_sender.try_send(action.clone()).map_err(
-                                |x| format!("Could not send action to client: {}", x),
-                            )?;
-                        }
+                match action {
+                    RendererAction::Display(..) => (),
+                    _ => {
+                        general_server_sender
+                            .try_send(action.clone())
+                            .map_err(|x| {
+                                format!("Could not send action to client: {}", x)
+                            })?;
                     }
+                }
 
-                    match action {
-                        RendererAction::Load => {
-                            priority_server_receiver.clear_priority(0);
-                            /* A failed reload keeps showing the last good version */
-                            let Ok(result) = state.load() else { continue };
+                match action {
+                    RendererAction::Load => {
+                        priority_server_receiver.clear_priority(0);
+                        /* A failed reload keeps showing the last good version */
+                        let Ok(result) = state.load() else { continue };
 
-                            // Clear the scheduled pages for rendering
-                            priority_server_receiver.clear_priority(1);
+                        // Clear the scheduled pages for rendering
+                        priority_server_receiver.clear_priority(1);
 
-                            result_server_sender.try_send_priority(result, 0).map_err(
-                                |x| format!("Could not send results to client: {}", x),
-                            )?;
+                        result_server_sender.try_send_priority(result, 0).map_err(
+                            |x| format!("Could not send results to client: {}", x),
+                        )?;
+                    }
+                    RendererAction::ToggleAlpha => {
+                        state.alpha = !state.alpha;
+
+                        // Clear the scheduled pages for rendering
+                        priority_server_receiver.clear_priority(1);
+                    }
+                    RendererAction::ToggleInverse => {
+                        state.inverse = !state.inverse;
+
+                        // Clear the scheduled pages for rendering
+                        priority_server_receiver.clear_priority(1);
+                    }
+                    RendererAction::Search(needle) => {
+                        let matches = state.search(&needle);
+                        priority_server_receiver.clear_priority(1);
+                        result_server_sender
+                            .try_send_priority(
+                                RendererResult::SearchResults { needle, matches },
+                                0,
+                            )
+                            .map_err(|x| {
+                                format!("Could not send results to client: {}", x)
+                            })?;
+                    }
+                    RendererAction::SetCurrentMatch(current) => {
+                        state.current_hit = current;
+                        priority_server_receiver.clear_priority(1);
+                    }
+                    RendererAction::ClearSearch => {
+                        state.hits.clear();
+                        state.current_hit = None;
+                        priority_server_receiver.clear_priority(1);
+                    }
+                    RendererAction::Display(page, scale) => {
+                        /* A newer zoom asked for this page at another scale */
+                        let wanted = f32::from_bits(RENDER_SCALE.load(Ordering::Acquire));
+                        if (scale - wanted).abs() > wanted * 1e-3 {
+                            continue;
                         }
-                        RendererAction::ToggleAlpha => {
-                            state.alpha = !state.alpha;
-
-                            // Clear the scheduled pages for rendering
-                            priority_server_receiver.clear_priority(1);
-                        }
-                        RendererAction::ToggleInverse => {
-                            state.inverse = !state.inverse;
-
-                            // Clear the scheduled pages for rendering
-                            priority_server_receiver.clear_priority(1);
-                        }
-                        RendererAction::Search(needle) => {
-                            let matches = state.search(&needle);
-                            priority_server_receiver.clear_priority(1);
+                        if state.cache.get(page).is_none() {
+                            // Sending `None` as data signals that it should be
+                            // removed from the registry
                             result_server_sender
                                 .try_send_priority(
-                                    RendererResult::SearchResults { needle, matches },
-                                    0,
-                                )
-                                .map_err(|x| {
-                                    format!("Could not send results to client: {}", x)
-                                })?;
-                        }
-                        RendererAction::SetCurrentMatch(current) => {
-                            state.current_hit = current;
-                            priority_server_receiver.clear_priority(1);
-                        }
-                        RendererAction::ClearSearch => {
-                            state.hits.clear();
-                            state.current_hit = None;
-                            priority_server_receiver.clear_priority(1);
-                        }
-                        RendererAction::Display(page) => {
-                            if state.cache.get(page).is_none() {
-                                // Sending `None` as data signals that it should be
-                                // removed from the registry
-                                result_server_sender
-                                    .try_send_priority(
-                                        RendererResult::Image { page, data: None },
-                                        1,
-                                    )
-                                    .map_err(|x| {
-                                        format!("Could not send result to client: {}", x)
-                                    })?;
-                                continue;
-                            }
-
-                            /* A page that can't be drawn stays blank */
-                            let Ok(mut pixmap) = state.cache[page].to_pixmap(
-                                &state.ctm,
-                                &state.cs,
-                                state.alpha,
-                                false,
-                            ) else {
-                                continue;
-                            };
-                            if state.inverse {
-                                let n = pixmap.n() as usize;
-                                invert_pixels(pixmap.samples_mut(), n);
-                            }
-                            state.highlight(page, &mut pixmap);
-
-                            let Ok(image) = Image::new(&pixmap) else {
-                                continue;
-                            };
-                            result_server_sender
-                                .try_send_priority(
-                                    RendererResult::Image {
-                                        page,
-                                        data: Some(Arc::new(RwLock::new(image))),
-                                    },
+                                    RendererResult::Image { page, data: None },
                                     1,
                                 )
                                 .map_err(|x| {
-                                    format!("Could not send results to client: {}", x)
+                                    format!("Could not send result to client: {}", x)
                                 })?;
+                            continue;
                         }
-                    };
-                }
 
-                Ok(())
-            });
+                        /* At most so many pixels, so that a deep zoom can't fill
+                         * the memory kitty keeps for images */
+                        let render = match state.cache[page].bounds() {
+                            Ok(b) => {
+                                let area = (b.width() * b.height()).max(1.0);
+                                scale.min((MAX_PIXELS / area).sqrt())
+                            }
+                            Err(_) => scale,
+                        };
+                        /* A page that can't be drawn stays blank */
+                        let Ok(mut pixmap) = state.cache[page].to_pixmap(
+                            &Matrix::new_scale(render, render),
+                            &state.cs,
+                            state.alpha,
+                            false,
+                        ) else {
+                            continue;
+                        };
+                        if state.inverse {
+                            let n = pixmap.n() as usize;
+                            invert_pixels(pixmap.samples_mut(), n);
+                        }
+                        state.highlight(page, &mut pixmap, render);
+
+                        let Ok(image) = Image::new(&pixmap, padding(), scale) else {
+                            continue;
+                        };
+                        result_server_sender
+                            .try_send_priority(
+                                RendererResult::Image {
+                                    page,
+                                    data: Some(Arc::new(RwLock::new(image))),
+                                },
+                                1,
+                            )
+                            .map_err(|x| {
+                                format!("Could not send results to client: {}", x)
+                            })?;
+                    }
+                };
+            }
+
+            Ok(())
+        });
 
         /* ======================== Check and move the threads ======================= */
         if thread_render.is_finished() {
@@ -452,7 +472,7 @@ impl Renderer {
 
     pub fn send_action(&self, action: RendererAction) -> Result<(), String> {
         match action {
-            RendererAction::Display(_) => self
+            RendererAction::Display(..) => self
                 .priority_client_sender
                 .try_send_priority(action, 0)
                 .map_err(|x| format!("Could not send action to renderer: {}", x))?,
@@ -466,7 +486,7 @@ impl Renderer {
         /* Sends an action to the renderer thread and waits until the thread confirms
          * that the action has been accepted and scheduled */
         match action {
-            RendererAction::Display(_) => Err("Cannot wait for display".to_string())?,
+            RendererAction::Display(..) => Err("Cannot wait for display".to_string())?,
             _ => self
                 .priority_client_sender
                 .try_send_priority(action.clone(), 0)

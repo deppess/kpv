@@ -2,39 +2,49 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{
     drivers::graphics::*,
-    globals::{IMAGE_PADDING, RUNNING},
+    globals::RUNNING,
     ui::{viewport, Viewport},
     viewer::DisplayRect,
 };
 
 use mupdf::Pixmap;
 
+/* A page image that kitty holds. Only its size is kept here; if kitty loses it, the
+ * page is rendered again. */
 pub struct Image {
     id: usize,
-    /* Stores the dimension of the zoomed in bitmap WITHOUT padding */
+    /* The bitmap's size without its padding */
     dimensions: (i32, i32),
-    data: Vec<u8>,
+    /* Clear pixels around it, which let a page be cut at whole cells */
+    padding: usize,
+    /* The scale it was asked for, in pixels per page unit */
+    scale: f32,
+    /* Bytes kitty keeps for it */
+    bytes: usize,
 }
 
 impl Image {
-    pub fn new(pixmap: &Pixmap) -> Result<Self, String> {
+    /* Sends `pixmap`, rendered for `scale`, to kitty with `padding` clear pixels around */
+    pub fn new(pixmap: &Pixmap, padding: usize, scale: f32) -> Result<Self, String> {
         static ID: AtomicUsize = AtomicUsize::new(1);
 
-        let padding = *IMAGE_PADDING.get().unwrap();
-
-        let image = Self {
-            id: ID.fetch_add(1, Ordering::AcqRel),
-            dimensions: (pixmap.width() as i32, pixmap.height() as i32),
-            data: pad_rgba(
-                pixmap.samples(),
-                pixmap.width() as usize,
-                pixmap.n() as usize,
-                padding,
-            ),
-        };
-
-        image.transfer()?;
-        Ok(image)
+        let (width, height) = (pixmap.width() as usize, pixmap.height() as usize);
+        let data = pad_rgba(pixmap.samples(), width, pixmap.n() as usize, padding);
+        let id = ID.fetch_add(1, Ordering::AcqRel);
+        terminal_graphics_transfer_bitmap(
+            id,
+            width + 2 * padding,
+            height + 2 * padding,
+            &data,
+            true,
+        )?;
+        Ok(Self {
+            id,
+            dimensions: (width as i32, height as i32),
+            padding,
+            scale,
+            bytes: data.len(),
+        })
     }
 
     pub fn id(&self) -> usize {
@@ -42,28 +52,17 @@ impl Image {
     }
 
     pub fn size(&self) -> usize {
-        self.data.len()
+        self.bytes
+    }
+
+    pub fn scale(&self) -> f32 {
+        self.scale
     }
 
     /* Where the image goes to show a page at `rect`; `None` when that is outside the
      * viewport */
     pub fn placement(&self, rect: DisplayRect) -> Option<Placement> {
-        let padding = *IMAGE_PADDING.get().unwrap() as f64;
-        placement(rect, self.dimensions, padding, &viewport())
-    }
-
-    pub fn transfer(&self) -> Result<(), String> {
-        let padding = *IMAGE_PADDING.get().unwrap();
-
-        terminal_graphics_transfer_bitmap(
-            self.id,
-            self.dimensions.0 as usize + 2 * padding,
-            self.dimensions.1 as usize + 2 * padding,
-            self.data.as_slice(),
-            true,
-        )?;
-
-        Ok(())
+        placement(rect, self.dimensions, self.padding as f64, &viewport())
     }
 }
 
