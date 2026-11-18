@@ -7,7 +7,11 @@ use crate::{drivers::graphics::GraphicsResponse, globals::RUNNING};
 
 pub enum InputEvent {
     Key(KeyEvent),
-    MouseScroll(MouseEventKind, KeyModifiers),
+    /* The wheel, and where the mouse was, in pixels */
+    MouseScroll(MouseEventKind, KeyModifiers, u16, u16),
+    Paste(String),
+    /* The terminal window gained or lost focus */
+    Focus(bool),
 }
 
 pub struct EventThreadData(
@@ -41,17 +45,20 @@ pub fn spawn() -> EventThreadData {
                             | MouseEventKind::ScrollLeft
                             | MouseEventKind::ScrollRight),
                         modifiers,
-                        ..
+                        column,
+                        row,
                     },
                 ) => {
                     sender_input
-                        .send(InputEvent::MouseScroll(kind, modifiers))
+                        .send(InputEvent::MouseScroll(kind, modifiers, column, row))
                         .is_ok()
                         && sender_mouse.send(event).is_ok()
                 }
                 Event::Mouse(event) => sender_mouse.send(event).is_ok(),
                 Event::Resize(width, height) => sender_ws.send((width, height)).is_ok(),
-                _ => true,
+                Event::Paste(text) => sender_input.send(InputEvent::Paste(text)).is_ok(),
+                Event::FocusGained => sender_input.send(InputEvent::Focus(true)).is_ok(),
+                Event::FocusLost => sender_input.send(InputEvent::Focus(false)).is_ok(),
             };
             if !sent {
                 return;

@@ -494,6 +494,17 @@ impl Viewer {
         self.bound_viewer();
     }
 
+    /* Fits the page width to the viewport again after the viewport changed width,
+     * keeping the zoom and the place being read */
+    pub fn refit(&mut self) {
+        if self.cumulative_heights.is_empty() || self.max_width <= 0.0 {
+            return;
+        }
+        let (page, within, zoom) = self.position();
+        self.fit_scale = viewport().width() / self.max_width;
+        self.restore(page, within, zoom);
+    }
+
     pub fn center_viewer(&mut self) {
         self.offset.0 = viewport().width() * 0.5 - self.max_width * self.scale * 0.5;
     }

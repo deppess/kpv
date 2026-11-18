@@ -1,18 +1,19 @@
 /* What keys, the mouse wheel and `:` commands do */
 
-use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
-use keybinds::{KeyInput, Keybinds};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use keybinds::{KeyInput, KeySeq, Keybinds};
 
 use crate::app::*;
 use crate::config::*;
 use crate::drivers::commands::PointerShape;
 use crate::frame::set_pointer;
 use crate::globals::*;
+use crate::notes::picker::PickerKey;
 use crate::outline::{current_section, TocKey};
 use crate::ruler;
 use crate::state::*;
 use crate::threads::renderer::{Renderer, RendererAction};
-use crate::ui::{self, help_max_scroll, help_visible, toc_visible, viewport};
+use crate::ui::{self, help_max_scroll, help_visible, inner, toc_visible, viewport};
 use crate::viewer::*;
 
 /* `true` indicates that the caller should exit *safely* the current process */
@@ -25,7 +26,7 @@ pub fn handle_key(
 ) -> bool {
     match &mut app.mode {
         Mode::Help { scroll } => {
-            let visible = help_visible(&viewport());
+            let visible = help_visible(&inner());
             let max = help_max_scroll(app.help.len(), visible);
             let half = (visible / 2).max(1);
             match key.code {
@@ -72,7 +73,7 @@ pub fn handle_key(
         }
         Mode::Toc => {
             app.message = None;
-            match app.toc.key(key, toc_visible(&viewport())) {
+            match app.toc.key(key, toc_visible(&inner())) {
                 TocKey::Handled => (),
                 TocKey::Close => app.mode = Mode::Normal,
                 TocKey::Jump { close } => {
@@ -231,6 +232,11 @@ pub fn handle_key(
                 app.mode = Mode::Toc;
             }
         }
+        ConfigAction::FocusNote
+        | ConfigAction::FocusPdf
+        | ConfigAction::HideNote
+        | ConfigAction::SwitchNote
+        | ConfigAction::NewNote => pane_action(action, viewer, app),
         ConfigAction::NextMatch | ConfigAction::PrevMatch => {
             let steps = if action == ConfigAction::NextMatch {
                 times as isize
@@ -253,15 +259,30 @@ pub fn handle_key(
     false
 }
 
+/* The wheel at `x`, `y` in pixels scrolls what's under it: the contents panel, the
+ * note, or the pages */
 pub fn handle_mouse_scroll(
     kind: MouseEventKind,
+    mods: KeyModifiers,
+    (x, y): (u16, u16),
     viewer: &mut Viewer,
     app: &mut App,
 ) -> bool {
     let config = CONFIG.get().unwrap();
+    let over_toc = app.mode == Mode::Toc && ui::over_toc(&inner(), x, y);
+    if !over_toc && !matches!(app.mode, Mode::Help { .. }) {
+        if let Some((col, row)) = over_notes(app, x, y) {
+            if let Some(editor) = &mut app.notes.editor {
+                if app.notes.picker.is_none() {
+                    editor.mouse(kind, mods, col, row);
+                }
+            }
+            return false;
+        }
+    }
 
     if let Mode::Help { scroll } = &mut app.mode {
-        let max = help_max_scroll(app.help.len(), help_visible(&viewport()));
+        let max = help_max_scroll(app.help.len(), help_visible(&inner()));
         match kind {
             MouseEventKind::ScrollDown => *scroll = (*scroll + 1).min(max),
             MouseEventKind::ScrollUp => *scroll = scroll.saturating_sub(1),
@@ -270,7 +291,7 @@ pub fn handle_mouse_scroll(
         return false;
     }
     if app.mode == Mode::Toc {
-        let visible = toc_visible(&viewport());
+        let visible = toc_visible(&inner());
         match kind {
             MouseEventKind::ScrollDown => app.toc.scroll_by(3, visible),
             MouseEventKind::ScrollUp => app.toc.scroll_by(-3, visible),
@@ -442,7 +463,7 @@ pub fn use_mark(kind: ConfigAction, c: char, viewer: &mut Viewer, app: &mut App)
 pub fn reveal_section(app: &mut App, viewer: &Viewer) {
     let (page, y) = viewer.reading_spot();
     let section = current_section(&app.toc.entries, page, y);
-    app.toc.reveal(section, toc_visible(&viewport()));
+    app.toc.reveal(section, toc_visible(&inner()));
 }
 
 /* Goes to the selected entry of the panel */
@@ -461,7 +482,7 @@ pub fn toc_jump(viewer: &mut Viewer, app: &mut App) {
 
 /* A click on the panel: on a fold marker it folds, elsewhere on an entry it goes there */
 pub fn toc_click(mouse: MouseEvent, viewer: &mut Viewer, app: &mut App) {
-    let vp = viewport();
+    let vp = inner();
     let Some((row, col)) = ui::toc_hit(&vp, mouse.column, mouse.row) else {
         return;
     };
@@ -528,7 +549,7 @@ pub fn handle_pointer(
 ) -> bool {
     let clicked = mouse.kind.is_down();
     let over_panel =
-        app.mode == Mode::Toc && ui::over_toc(&viewport(), mouse.column, mouse.row);
+        app.mode == Mode::Toc && ui::over_toc(&inner(), mouse.column, mouse.row);
     if over_panel {
         /* The panel covers the page: links under it can't be hovered or clicked */
         set_pointer(app, PointerShape::Default);
@@ -562,4 +583,172 @@ pub fn handle_pointer(
         set_pointer(app, PointerShape::Default);
     }
     clicked
+}
+
+/* What the notes actions do, from the PDF or from inside the editor */
+pub fn pane_action(action: ConfigAction, viewer: &mut Viewer, app: &mut App) {
+    match action {
+        ConfigAction::FocusNote => {
+            if let Err(e) = app.notes.focus(editor_size()) {
+                app.message = Some(e);
+            }
+        }
+        ConfigAction::FocusPdf => app.notes.unfocus(),
+        ConfigAction::HideNote => app.notes.hide(),
+        ConfigAction::SwitchNote => app.notes.choose_another(false),
+        ConfigAction::NewNote => app.notes.choose_another(true),
+        _ => return,
+    }
+    if app.mode == Mode::Toc && app.notes.focused {
+        app.mode = Mode::Normal;
+    }
+    apply_layout(viewer, app);
+}
+
+/* A key while the notes panel has the keys. The notes keys with Ctrl or Alt in
+ * `global` work here too; any other key goes to the picker or the editor. */
+pub fn handle_notes_key(
+    key: KeyEvent,
+    global: &mut Keybinds<ConfigAction>,
+    viewer: &mut Viewer,
+    app: &mut App,
+) {
+    let was_ongoing = global.is_ongoing();
+    if let Some(action) = global.dispatch(KeyInput::from(key)).copied() {
+        pane_action(action, viewer, app);
+        return;
+    }
+    /* Part of a layer's keys, or a key that ended one without a match */
+    if was_ongoing || global.is_ongoing() {
+        return;
+    }
+
+    app.message = None;
+    if let Some(picker) = &mut app.notes.picker {
+        let visible = ui::picker_visible(editor_size().rows + 2);
+        match picker.key(key, visible) {
+            PickerKey::Handled => (),
+            PickerKey::Close => {
+                app.notes.picker = None;
+                if app.notes.editor.is_none() {
+                    app.notes.hide();
+                    apply_layout(viewer, app);
+                }
+            }
+            PickerKey::Chosen(choice) => choose_note(choice, viewer, app),
+        }
+        return;
+    }
+    if let Some(editor) = &mut app.notes.editor {
+        editor.key(&key);
+    }
+}
+
+fn choose_note(choice: crate::notes::picker::Choice, viewer: &mut Viewer, app: &mut App) {
+    if let Err(e) = app.notes.chosen(choice, editor_size()) {
+        app.message = Some(e);
+    }
+    apply_layout(viewer, app);
+}
+
+/* The cell of the editor under `x`, `y` in pixels, when that's over the notes panel */
+fn over_notes(app: &App, x: u16, y: u16) -> Option<(u16, u16)> {
+    if !app.notes.open {
+        return None;
+    }
+    let inner = inner();
+    let (left, top, width, height) =
+        ui::notes_rect(&inner, CONFIG.get().unwrap().notes.width);
+    let (col, row) = ui::cell_at(&inner, x, y);
+    let inside = col >= left && col < left + width && row >= top && row < top + height;
+    inside.then(|| {
+        (
+            col.saturating_sub(left + 1).min(width.saturating_sub(3)),
+            row.saturating_sub(top + 1).min(height.saturating_sub(3)),
+        )
+    })
+}
+
+/* Clicks and drags with the notes panel open. A click in the side that doesn't have
+ * the keys gives it the keys and does nothing else; in the notes panel the mouse then
+ * reaches the editor. `true` when the event was the panel's. */
+pub fn notes_mouse(mouse: &mut MouseEvent, viewer: &mut Viewer, app: &mut App) -> bool {
+    if !app.notes.open
+        || (app.mode == Mode::Toc && ui::over_toc(&inner(), mouse.column, mouse.row))
+    {
+        return false;
+    }
+    let over = over_notes(app, mouse.column, mouse.row);
+    match (mouse.kind, over, app.notes.focused) {
+        (MouseEventKind::Down(_), Some(_), false) => {
+            pane_action(ConfigAction::FocusNote, viewer, app);
+            mouse.kind = MouseEventKind::Moved;
+            true
+        }
+        (MouseEventKind::Down(_), None, true) => {
+            pane_action(ConfigAction::FocusPdf, viewer, app);
+            mouse.kind = MouseEventKind::Moved;
+            true
+        }
+        (kind, Some((col, row)), true) => {
+            if let Some(picker) = &mut app.notes.picker {
+                if matches!(kind, MouseEventKind::Down(_)) {
+                    let visible = ui::picker_visible(editor_size().rows + 2);
+                    if let PickerKey::Chosen(choice) = picker.click(row as usize, visible)
+                    {
+                        choose_note(choice, viewer, app);
+                    }
+                }
+            } else if let Some(editor) = &mut app.notes.editor {
+                editor.mouse(kind, mouse.modifiers, col, row);
+            }
+            mouse.kind = MouseEventKind::Moved;
+            true
+        }
+        /* A drag that leaves the panel still belongs to the editor */
+        (MouseEventKind::Drag(_) | MouseEventKind::Up(_), None, true) => {
+            let (col, row) = (0, 0);
+            if let Some(editor) = &mut app.notes.editor {
+                editor.mouse(mouse.kind, mouse.modifiers, col, row);
+            }
+            mouse.kind = MouseEventKind::Moved;
+            true
+        }
+        (_, Some(_), false) => true,
+        _ => false,
+    }
+}
+
+/* The layer whose first keys `matcher` has seen, when it's a named one */
+pub fn layer_popup(matcher: &Keybinds<ConfigAction>) -> Option<ui::Layer> {
+    let typed = matcher.ongoing_inputs();
+    if typed.is_empty() {
+        return None;
+    }
+    let title = CONFIG
+        .get()
+        .unwrap()
+        .layers
+        .iter()
+        .find(|(keys, _)| {
+            keys.parse::<KeySeq>()
+                .is_ok_and(|seq| seq.as_slice() == typed)
+        })?
+        .1
+        .clone();
+    let keys = matcher
+        .as_slice()
+        .iter()
+        .filter(|b| {
+            b.seq.as_slice().len() > typed.len() && b.seq.as_slice().starts_with(typed)
+        })
+        .map(|b| {
+            let rest: Vec<String> = b.seq.as_slice()[typed.len()..]
+                .iter()
+                .map(|k| k.to_string())
+                .collect();
+            (rest.join(" "), b.action.describe().to_owned())
+        })
+        .collect();
+    Some(ui::Layer { title, keys })
 }

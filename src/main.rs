@@ -7,6 +7,7 @@ mod image;
 mod input;
 mod jumps;
 mod labels;
+mod notes;
 mod outline;
 mod ruler;
 mod state;
@@ -24,16 +25,21 @@ use std::io;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{never, Receiver, TryRecvError};
-use crossterm::cursor::{Hide, Show};
-use crossterm::event::{KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::cursor::{Hide, SetCursorStyle, Show};
+use crossterm::event::{
+    DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange,
+    KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, MouseEvent, MouseEventKind,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, window_size, Clear, ClearType,
     EnterAlternateScreen, LeaveAlternateScreen, WindowSize,
 };
+use keybinds::{Keybinds, Mods};
 
 use crate::app::*;
 use crate::config::*;
@@ -51,11 +57,14 @@ use crate::state::*;
 use crate::theme::{set_theme, Theme};
 use crate::threads::event::InputEvent;
 use crate::threads::renderer::RendererAction;
-use crate::ui::{help_max_scroll, help_visible, toc_visible, viewport};
+use crate::ui::{help_max_scroll, help_visible, inner, toc_visible};
 use crate::viewer::*;
 
 /* The main loop's wakeup when the position is due to be written, after the channels */
-const SAVE_DUE: usize = 8;
+const SAVE_DUE: usize = 9;
+/* How long the first keys of a sequence wait for the rest: long, since a layer shows
+ * what can follow and gives time to read it */
+const SEQUENCE_WAIT: Duration = Duration::from_secs(3600);
 
 fn main() {
     /* ============================= Check the argument ============================= */
@@ -87,7 +96,14 @@ fn main() {
             EnterAlternateScreen,
             Hide,
             Clear(ClearType::All),
-            EnableMouseCapturePixels
+            EnableMouseCapturePixels,
+            /* Keys like Shift-Enter and Ctrl-h arrive as themselves, for the editor in
+             * the notes panel and for bindings */
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+            ),
+            EnableBracketedPaste,
+            EnableFocusChange
         )
     }) {
         fail(&format!("Could not set up the terminal: {}", e));
@@ -118,6 +134,24 @@ fn main() {
         key_matcher = bindings;
         CONFIG.get_or_init(|| config);
     }
+    key_matcher.set_timeout(SEQUENCE_WAIT);
+    /* While the note has the keys, only the notes keys with Ctrl or Alt are taken from
+     * the editor */
+    let mut global_keys = Keybinds::new(
+        key_matcher
+            .as_slice()
+            .iter()
+            .filter(|b| {
+                b.action.is_pane()
+                    && b.seq
+                        .as_slice()
+                        .first()
+                        .is_some_and(|k| k.mods().intersects(Mods::CTRL | Mods::ALT))
+            })
+            .cloned()
+            .collect(),
+    );
+    global_keys.set_timeout(SEQUENCE_WAIT);
     /* A broken theme falls back to the default colors and says so */
     let theme_problems = match config_folder() {
         Ok(folder) => {
@@ -201,6 +235,8 @@ fn main() {
         throttle: LastExecuted::default(),
         fatal: None,
         shown: None,
+        notes: crate::notes::Notes::new(Path::new(&arg)),
+        layer: None,
     };
 
     let mut current_mouse = MouseEvent {
@@ -223,6 +259,14 @@ fn main() {
         sel.recv(&event_inputs.3);
         /* A signal to stop */
         sel.recv(&stop);
+        /* What the editor in the notes panel writes */
+        let editor_output = app
+            .notes
+            .editor
+            .as_ref()
+            .map(|e| e.output.clone())
+            .unwrap_or_else(never);
+        sel.recv(&editor_output);
 
         /* Keys go first: a busy renderer or a redraw loop must never make the viewer
          * ignore input, `q` above all */
@@ -276,29 +320,57 @@ fn main() {
                         break 'main;
                     }
                 };
+                let notes_keys = app.notes.open && app.notes.focused;
                 match input {
+                    InputEvent::Key(key) if key.kind == KeyEventKind::Release => (),
+                    InputEvent::Key(key) if notes_keys => {
+                        handle_notes_key(key, &mut global_keys, &mut viewer, &mut app);
+                    }
                     InputEvent::Key(key) => {
-                        if key.kind != KeyEventKind::Release
-                            && handle_key(
-                                key,
-                                &mut key_matcher,
-                                &mut viewer,
-                                &renderer,
-                                &mut app,
-                            )
+                        if handle_key(
+                            key,
+                            &mut key_matcher,
+                            &mut viewer,
+                            &renderer,
+                            &mut app,
+                        ) {
+                            break 'main;
+                        }
+                    }
+                    InputEvent::MouseScroll(kind, mods, x, y) => {
+                        if handle_mouse_scroll(kind, mods, (x, y), &mut viewer, &mut app)
                         {
                             break 'main;
                         }
                     }
-                    InputEvent::MouseScroll(kind, _modifiers) => {
-                        if handle_mouse_scroll(kind, &mut viewer, &mut app) {
-                            break 'main;
+                    InputEvent::Paste(text) if notes_keys => {
+                        if let Some(editor) = &mut app.notes.editor {
+                            editor.paste(&text);
+                        }
+                    }
+                    InputEvent::Paste(_) => (),
+                    /* Leaving the terminal window saves the note */
+                    InputEvent::Focus(gained) => {
+                        if let (true, Some(editor)) = (notes_keys, &mut app.notes.editor)
+                        {
+                            editor.focus(gained);
                         }
                     }
                 }
+                let matcher = if app.notes.open && app.notes.focused {
+                    &global_keys
+                } else {
+                    &key_matcher
+                };
+                app.layer = layer_popup(matcher);
             }
             5 => match take(&event_inputs.1) {
-                Taken(mouse) => current_mouse = mouse,
+                Taken(mouse) => {
+                    current_mouse = mouse;
+                    if notes_mouse(&mut current_mouse, &mut viewer, &mut app) {
+                        current_mouse.kind = MouseEventKind::Moved;
+                    }
+                }
                 Nothing => continue 'main,
                 Gone => {
                     app.fatal = Some("Lost the terminal".to_owned());
@@ -316,14 +388,29 @@ fn main() {
                 if let Ok(size) = window_size() {
                     *TERMINAL_SIZE.get().unwrap().write().unwrap() = size;
                 }
-                viewer.bound_viewer();
-                app.toc.scroll_by(0, toc_visible(&viewport()));
+                apply_layout(&mut viewer, &mut app);
+                viewer.refit();
+                app.toc.scroll_by(0, toc_visible(&inner()));
                 if let Mode::Help { scroll } = &mut app.mode {
-                    let max = help_max_scroll(app.help.len(), help_visible(&viewport()));
+                    let max = help_max_scroll(app.help.len(), help_visible(&inner()));
                     *scroll = (*scroll).min(max);
                 }
             }
             7 => break 'main,
+            8 => match take(&editor_output) {
+                Taken(bytes) => {
+                    if let Some(editor) = &mut app.notes.editor {
+                        editor.feed(&bytes);
+                        editor.take_output();
+                    }
+                }
+                Nothing => continue 'main,
+                /* The editor quit (`:q`): the panel closes */
+                Gone => {
+                    app.notes.editor_ended();
+                    apply_layout(&mut viewer, &mut app);
+                }
+            },
             SAVE_DUE => {
                 save_state(&mut app);
                 continue 'main;
@@ -362,8 +449,10 @@ fn main() {
         check_placements(&gr, displayed, &mut viewer, &mut app);
     }
 
+    /* The note is saved and the editor quits before anything else goes */
+    app.notes.close_editor();
     if app.store.is_some() {
-        app.save_due = Some((file_state(&viewer, &app.marks), Instant::now()));
+        app.save_due = Some((file_state(&viewer, &app), Instant::now()));
         save_state(&mut app);
     }
     RUNNING.store(false, Ordering::Release);
@@ -382,8 +471,12 @@ fn main() {
 fn restore_terminal() {
     let _ = execute!(
         io::stdout(),
+        PopKeyboardEnhancementFlags,
+        DisableBracketedPaste,
+        DisableFocusChange,
         DisableMouseCapturePixels,
         LeaveAlternateScreen,
+        SetCursorStyle::DefaultUserShape,
         Show
     );
     let _ = disable_raw_mode();

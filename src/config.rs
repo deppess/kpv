@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     mem::discriminant,
     path::{Path, PathBuf},
 };
@@ -15,7 +15,21 @@ use crate::globals::{CONFIG_FILENAME, DEFAULT_CONFIG};
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub viewer: ConfigViewer,
+    pub notes: ConfigNotes,
+    /* Key sequences that start a layer, and the layer's name */
+    #[serde(default)]
+    pub layers: BTreeMap<String, String>,
     pub bindings: Option<Keybinds<ConfigAction>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfigNotes {
+    pub vault: String,
+    pub folder: String,
+    pub editor: String,
+    pub template: String,
+    /* Percent of the window */
+    pub width: u16,
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,11 +76,16 @@ pub enum ConfigAction {
     HalfPageUp,
     FitWidth,
     FitPage,
+    FocusNote,
+    FocusPdf,
+    HideNote,
+    SwitchNote,
+    NewNote,
 }
 
 impl ConfigAction {
     /* Every action in the order the help overlay lists them */
-    pub const ALL: [ConfigAction; 30] = [
+    pub const ALL: [ConfigAction; 35] = [
         ConfigAction::MoveDown,
         ConfigAction::MoveUp,
         ConfigAction::MoveLeft,
@@ -95,9 +114,26 @@ impl ConfigAction {
         ConfigAction::ToggleRuler,
         ConfigAction::ToggleInverse,
         ConfigAction::ToggleAlpha,
+        ConfigAction::FocusNote,
+        ConfigAction::FocusPdf,
+        ConfigAction::HideNote,
+        ConfigAction::SwitchNote,
+        ConfigAction::NewNote,
         ConfigAction::ShowHelp,
         ConfigAction::Quit,
     ];
+
+    /* What the notes panel does; with Ctrl or Alt they work from inside the editor too */
+    pub fn is_pane(self) -> bool {
+        matches!(
+            self,
+            ConfigAction::FocusNote
+                | ConfigAction::FocusPdf
+                | ConfigAction::HideNote
+                | ConfigAction::SwitchNote
+                | ConfigAction::NewNote
+        )
+    }
 
     pub fn describe(self) -> &'static str {
         match self {
@@ -135,6 +171,11 @@ impl ConfigAction {
                 "Reading ruler: j and k then move it line by line"
             }
             ConfigAction::ToggleAlpha => "Transparent page background",
+            ConfigAction::FocusNote => "Go to the note, opening it if it's hidden",
+            ConfigAction::FocusPdf => "Go to the PDF",
+            ConfigAction::HideNote => "Hide the note (it's saved)",
+            ConfigAction::SwitchNote => "Switch to another note",
+            ConfigAction::NewNote => "New note with a name you give it",
             ConfigAction::ShowHelp => "Show this list",
             ConfigAction::Quit => "Quit",
         }
@@ -254,6 +295,14 @@ fn fix_config_toml(
                 /* Special case */
                 config_has_changed |= retire_bindings(current_rec, default_rec);
                 config_has_changed |= fix_config_keybindings(current_rec, default_rec)?;
+            } else if key == "layers" {
+                /* The user's own layers stay; only missing defaults are added */
+                for (name, value) in default_rec {
+                    if !current_rec.contains_key(name) {
+                        current_rec.insert(name.clone(), value.clone());
+                        config_has_changed = true;
+                    }
+                }
             } else {
                 config_has_changed |= fix_config_toml(current_rec, default_rec)?;
             }

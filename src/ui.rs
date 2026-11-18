@@ -9,7 +9,10 @@ use crossterm::{
     },
 };
 
+use std::sync::atomic::{AtomicU16, Ordering};
+
 use crate::globals::TERMINAL_SIZE;
+use crate::notes::{pane::Cell, picker::PickerRow};
 use crate::theme::{paint, Slot};
 
 /* The area inside the border where pages are drawn. Positions are 0-indexed cells,
@@ -56,9 +59,44 @@ impl Viewport {
     }
 }
 
-pub fn viewport() -> Viewport {
+/* Columns the notes panel takes on the left; the pages use the rest */
+static NOTES_COLS: AtomicU16 = AtomicU16::new(0);
+
+pub fn set_notes_cols(cols: u16) {
+    NOTES_COLS.store(cols, Ordering::Release);
+}
+
+/* The whole area inside the border, where panels go */
+pub fn inner() -> Viewport {
     let size = TERMINAL_SIZE.get().unwrap().read().unwrap();
     Viewport::from_size(size.columns, size.rows, size.width, size.height)
+}
+
+/* Where the pages go: inside the border, beside the notes panel when it's open */
+pub fn viewport() -> Viewport {
+    let mut vp = inner();
+    let notes = NOTES_COLS
+        .load(Ordering::Acquire)
+        .min(vp.cols.saturating_sub(1));
+    vp.col += notes;
+    vp.cols -= notes;
+    vp
+}
+
+/* The notes panel on the left of `inner`, `percent` of its width: left, top, width
+ * and height in cells, border included */
+pub fn notes_rect(inner: &Viewport, percent: u16) -> (u16, u16, u16, u16) {
+    let width = (inner.cols as u32 * percent.clamp(10, 90) as u32 / 100) as u16;
+    let width = width.max(12).min(inner.cols.saturating_sub(10)).max(3);
+    (inner.col, inner.row, width, inner.rows)
+}
+
+/* A 0-indexed cell under a mouse position in pixels */
+pub fn cell_at(vp: &Viewport, x: u16, y: u16) -> (u16, u16) {
+    (
+        (x as f64 / vp.pxpercol) as u16,
+        (y as f64 / vp.pxperrow) as u16,
+    )
 }
 
 fn color(slot: Slot) -> Color {
@@ -226,7 +264,7 @@ pub fn help_visible(vp: &Viewport) -> usize {
 
 /* Draws the help box centered in the viewport, starting at line `scroll` */
 pub fn draw_help(lines: &[HelpLine], scroll: usize) -> io::Result<()> {
-    let vp = viewport();
+    let vp = inner();
     let (left, top, width, height) = help_rect(&vp, lines);
     let (width, height) = (width as usize, height as usize);
     let visible = height - 2;
@@ -342,7 +380,7 @@ pub struct TocRow {
 /* Draws the contents panel down the left of the viewport. `rows` are the visible ones,
  * `position` goes in the top edge and `footer` in the bottom edge. */
 pub fn draw_toc(rows: &[TocRow], position: &str, footer: &str) -> io::Result<()> {
-    let vp = viewport();
+    let vp = inner();
     let width = toc_width(&vp) as usize;
     if width < 8 || vp.rows < 3 {
         return Ok(());
@@ -463,6 +501,295 @@ fn draw_toc_row(out: &mut io::Stdout, row: &TocRow, inner: usize) -> io::Result<
     )
 }
 
+/* What the notes panel shows */
+pub enum NotesBody<'a> {
+    /* The editor's screen */
+    Editor(&'a [Vec<Cell>]),
+    /* The note picker: its visible rows and the line under them */
+    Picker(&'a [PickerRow], String),
+}
+
+/* Draws the notes panel at `rect` with `title` in its top edge; its border is bright
+ * while it has the keys */
+pub fn draw_notes(
+    rect: (u16, u16, u16, u16),
+    title: &str,
+    focused: bool,
+    body: NotesBody,
+) -> io::Result<()> {
+    let (left, top, width, height) = rect;
+    if width < 4 || height < 3 {
+        return Ok(());
+    }
+    let inner = width as usize - 2;
+    let bg = background(Slot::NotesBackground);
+    let border = color(if focused {
+        Slot::NotesBorder
+    } else {
+        Slot::NotesBorderInactive
+    });
+    let mut out = io::stdout();
+
+    let title = truncate(title, inner.saturating_sub(2));
+    queue!(
+        out,
+        MoveTo(left, top),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print("╭ "),
+        SetForegroundColor(color(Slot::NotesTitle)),
+        SetAttribute(Attribute::Bold),
+        Print(&title),
+        SetAttribute(Attribute::NormalIntensity),
+        SetForegroundColor(border),
+        Print(" "),
+        Print("─".repeat(inner.saturating_sub(title.chars().count() + 2))),
+        Print("╮"),
+    )?;
+    for row in 0..height - 2 {
+        queue!(
+            out,
+            MoveTo(left, top + 1 + row),
+            SetBackgroundColor(bg),
+            SetForegroundColor(border),
+            Print("│"),
+            ResetColor,
+        )?;
+        match &body {
+            NotesBody::Editor(screen) => match screen.get(row as usize) {
+                Some(cells) => draw_cells(&mut out, cells, inner)?,
+                None => queue!(out, SetBackgroundColor(bg), Print(" ".repeat(inner)))?,
+            },
+            NotesBody::Picker(rows, footer) => {
+                let last = row == height - 3;
+                if last {
+                    let text = truncate(footer, inner.saturating_sub(2));
+                    let pad = inner.saturating_sub(text.chars().count() + 1);
+                    queue!(
+                        out,
+                        SetBackgroundColor(bg),
+                        SetForegroundColor(color(Slot::NotesMuted)),
+                        Print(" "),
+                        Print(&text),
+                        Print(" ".repeat(pad)),
+                    )?;
+                } else {
+                    draw_picker_row(&mut out, rows.get(row as usize), inner)?;
+                }
+            }
+        }
+        queue!(
+            out,
+            SetBackgroundColor(bg),
+            SetForegroundColor(border),
+            Print("│"),
+        )?;
+    }
+    queue!(
+        out,
+        MoveTo(left, top + height - 1),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print("╰"),
+        Print("─".repeat(inner)),
+        Print("╯"),
+        ResetColor,
+    )
+}
+
+/* One row of the editor's screen, `width` cells */
+fn draw_cells(out: &mut io::Stdout, cells: &[Cell], width: usize) -> io::Result<()> {
+    let mut last: Option<&Cell> = None;
+    /* A wide character's second half has its own cell, so cells are columns */
+    let drawn = cells.len().min(width);
+    for cell in cells.iter().take(width) {
+        if cell.text.is_empty() {
+            /* The second half of a wide character, drawn with the first */
+            continue;
+        }
+        let same = last.is_some_and(|l| {
+            (l.fg, l.bg, l.bold, l.dim, l.italic, l.underline, l.strike)
+                == (
+                    cell.fg,
+                    cell.bg,
+                    cell.bold,
+                    cell.dim,
+                    cell.italic,
+                    cell.underline,
+                    cell.strike,
+                )
+        });
+        if !same {
+            queue!(
+                out,
+                SetAttribute(Attribute::Reset),
+                SetForegroundColor(cell.fg),
+                SetBackgroundColor(cell.bg),
+            )?;
+            for (on, attribute) in [
+                (cell.bold, Attribute::Bold),
+                (cell.dim, Attribute::Dim),
+                (cell.italic, Attribute::Italic),
+                (cell.underline, Attribute::Underlined),
+                (cell.strike, Attribute::CrossedOut),
+            ] {
+                if on {
+                    queue!(out, SetAttribute(attribute))?;
+                }
+            }
+        }
+        queue!(out, Print(&cell.text))?;
+        last = Some(cell);
+    }
+    queue!(out, SetAttribute(Attribute::Reset))?;
+    if drawn < width {
+        queue!(
+            out,
+            SetBackgroundColor(background(Slot::NotesBackground)),
+            Print(" ".repeat(width - drawn)),
+        )?;
+    }
+    Ok(())
+}
+
+fn draw_picker_row(
+    out: &mut io::Stdout,
+    row: Option<&PickerRow>,
+    width: usize,
+) -> io::Result<()> {
+    let Some(row) = row else {
+        return queue!(
+            out,
+            SetBackgroundColor(background(Slot::NotesBackground)),
+            Print(" ".repeat(width))
+        );
+    };
+    let bg = background(if row.selected {
+        Slot::NotesSelected
+    } else {
+        Slot::NotesBackground
+    });
+    let hint = truncate(&row.hint, width / 3);
+    let room = width.saturating_sub(hint.chars().count() + 3);
+    let label = truncate(&row.label, room);
+    let pad = room - label.chars().count();
+    queue!(
+        out,
+        SetBackgroundColor(bg),
+        SetForegroundColor(color(Slot::NotesText)),
+        Print(" ")
+    )?;
+    if row.selected {
+        queue!(out, SetAttribute(Attribute::Bold))?;
+    }
+    queue!(
+        out,
+        Print(&label),
+        SetAttribute(Attribute::NormalIntensity),
+        Print(" ".repeat(pad + 1)),
+        SetForegroundColor(color(Slot::NotesMuted)),
+        Print(&hint),
+        Print(" "),
+    )
+}
+
+/* Rows of the picker's list in a notes panel `height` cells high */
+pub fn picker_visible(height: u16) -> usize {
+    (height as usize).saturating_sub(3).max(1)
+}
+
+/* A layer's name and what its keys do */
+pub struct Layer {
+    pub title: String,
+    pub keys: Vec<(String, String)>,
+}
+
+/* Where a layer's box goes: in the bottom right corner of `inner` */
+pub fn layer_rect(inner: &Viewport, layer: &Layer) -> (u16, u16, u16, u16) {
+    let keys = layer
+        .keys
+        .iter()
+        .map(|(k, _)| k.chars().count())
+        .max()
+        .unwrap_or(0);
+    let what = layer
+        .keys
+        .iter()
+        .map(|(_, w)| w.chars().count())
+        .max()
+        .unwrap_or(0);
+    let width = (keys + what + 6)
+        .max(layer.title.chars().count() + 6)
+        .min(inner.cols as usize) as u16;
+    let height = (layer.keys.len() + 2).min(inner.rows as usize) as u16;
+    (
+        inner.col + inner.cols - width,
+        inner.row + inner.rows - height,
+        width,
+        height,
+    )
+}
+
+pub fn draw_layer(layer: &Layer) -> io::Result<()> {
+    let (left, top, width, height) = layer_rect(&inner(), layer);
+    if width < 6 || height < 3 {
+        return Ok(());
+    }
+    let inner = width as usize - 2;
+    let bg = background(Slot::LayerBackground);
+    let border = color(Slot::LayerBorder);
+    let keys = layer
+        .keys
+        .iter()
+        .map(|(k, _)| k.chars().count())
+        .max()
+        .unwrap_or(0);
+    let mut out = io::stdout();
+    let title = truncate(&layer.title, inner.saturating_sub(4));
+    queue!(
+        out,
+        MoveTo(left, top),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print("╭ "),
+        SetForegroundColor(color(Slot::LayerTitle)),
+        SetAttribute(Attribute::Bold),
+        Print(&title),
+        SetAttribute(Attribute::NormalIntensity),
+        SetForegroundColor(border),
+        Print(" "),
+        Print("─".repeat(inner.saturating_sub(title.chars().count() + 2))),
+        Print("╮"),
+    )?;
+    for (i, (key, what)) in layer.keys.iter().take(height as usize - 2).enumerate() {
+        let text = truncate(what, inner.saturating_sub(keys + 4));
+        let pad = inner.saturating_sub(keys + 4 + text.chars().count());
+        queue!(
+            out,
+            MoveTo(left, top + 1 + i as u16),
+            SetForegroundColor(border),
+            Print("│ "),
+            SetForegroundColor(color(Slot::LayerKeys)),
+            Print(format!("{:<keys$}", key)),
+            Print("  "),
+            SetForegroundColor(color(Slot::LayerText)),
+            Print(&text),
+            Print(" ".repeat(pad)),
+            SetForegroundColor(border),
+            Print(" │"),
+        )?;
+    }
+    queue!(
+        out,
+        MoveTo(left, top + height - 1),
+        SetForegroundColor(border),
+        Print("╰"),
+        Print("─".repeat(inner)),
+        Print("╯"),
+        ResetColor,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -525,6 +852,23 @@ mod tests {
         assert_eq!(toc_hit(&vp, 400, 85), None);
         assert!(over_toc(&vp, 15, 25));
         assert!(!over_toc(&vp, 400, 85));
+    }
+
+    #[test]
+    fn the_notes_panel_takes_the_left_and_the_layer_box_the_corner() {
+        let vp = Viewport::from_size(100, 40, 1000, 800);
+        assert_eq!(notes_rect(&vp, 45), (1, 1, 44, 38));
+        /* A narrow window keeps 10 columns for the pages */
+        assert_eq!(notes_rect(&Viewport::from_size(20, 10, 200, 200), 45).2, 8);
+        let layer = Layer {
+            title: "Notes".to_owned(),
+            keys: vec![
+                ("x".to_owned(), "Hide".to_owned()),
+                ("s".to_owned(), "Switch".to_owned()),
+            ],
+        };
+        /* `x  Switch` plus the border and padding: 13 wide, 4 high, in the corner */
+        assert_eq!(layer_rect(&vp, &layer), (86, 35, 13, 4));
     }
 
     #[test]

@@ -36,6 +36,9 @@ pub struct FileState {
     pub id: Option<String>,
     #[serde(default)]
     pub path: Option<String>,
+    /* The note that goes with the file */
+    #[serde(default)]
+    pub note: Option<String>,
     /* Marks set with `m`, by letter */
     #[serde(default)]
     pub marks: BTreeMap<String, Spot>,
@@ -77,6 +80,11 @@ impl Store {
             move_old_files(&old.join(CONFIG_FILENAME), &dir);
         }
         Some(dir)
+    }
+
+    /* Where the file is now */
+    pub fn path(&self) -> &str {
+        &self.path
     }
 
     /* A rebuilt file can come back with a new ID */
@@ -153,6 +161,7 @@ fn same_place(a: &FileState, b: &FileState) -> bool {
         && (a.zoom - b.zoom).abs() < 1e-4
         && a.page_offset == b.page_offset
         && a.marks == b.marks
+        && a.note == b.note
         && a.id == b.id
         && a.path == b.path
 }
@@ -393,5 +402,25 @@ mod tests {
         assert!(dir.join("id-1.toml").exists());
         assert!(!dir.join("state").exists());
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_note_is_remembered_with_the_file() {
+        let dir =
+            std::env::temp_dir().join(format!("viewmer-note-{}", std::process::id()));
+        let mut store = Store::new(dir.clone(), None, Path::new("a.pdf"));
+        let mut state = FileState {
+            zoom: 1.0,
+            ..FileState::default()
+        };
+        store.save(&state).unwrap();
+        state.note = Some("/vault/a.md".to_owned());
+        assert!(store.is_dirty(&state), "choosing a note is a change");
+        store.save(&state).unwrap();
+        let loaded = Store::new(dir.clone(), None, Path::new("a.pdf"))
+            .load()
+            .unwrap();
+        assert_eq!(loaded.note.as_deref(), Some("/vault/a.md"));
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

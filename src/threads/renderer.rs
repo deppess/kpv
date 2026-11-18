@@ -5,7 +5,7 @@ use std::{
 };
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use mupdf::{Colorspace, Document, Link, Matrix, Page, Quad};
+use mupdf::{Colorspace, Document, Link, Matrix, MetadataName, Page, Quad};
 
 use crate::{
     config::Config,
@@ -51,6 +51,8 @@ pub enum RendererResult {
         outline: Vec<OutlineEntry>,
         /* The permanent half of the PDF's /ID */
         id: Option<String>,
+        /* The title stored in the PDF */
+        title: Option<String>,
     },
     Image {
         page: usize,
@@ -158,6 +160,11 @@ impl<'a> RendererInnerState<'a> {
             .map(|o| outline::flatten(&o))
             .unwrap_or_default();
         let id = store::document_id(&document);
+        let title = document
+            .metadata(MetadataName::Title)
+            .ok()
+            .map(|t| t.trim().to_owned())
+            .filter(|t| !t.is_empty());
 
         self.document = document;
         self.cache = cache;
@@ -172,6 +179,7 @@ impl<'a> RendererInnerState<'a> {
             labels,
             outline,
             id,
+            title,
         })
     }
 }

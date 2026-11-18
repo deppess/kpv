@@ -1,6 +1,6 @@
 # viewmer
 
-A PDF viewer for the kitty terminal. Pages scroll continuously in a framed window with a status bar, and you get vim-like keys, page jumps, full-text search with highlights, a key list on `?`, clickable links, and live reload when the file changes. It is a fork of [MeowPDF](https://github.com/monoamine11231/MeowPDF), reworked for one setup.
+A PDF viewer for the kitty terminal. Pages scroll continuously in a framed window with a status bar, and you get vim-like keys, page jumps, full-text search with highlights, a key list on `?`, clickable links, live reload when the file changes, and a notes panel with your editor beside the pages. It is a fork of [MeowPDF](https://github.com/monoamine11231/MeowPDF), reworked for one setup.
 
 ## Usage
 
@@ -42,6 +42,8 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 | `Ctrl-r` | Invert colors |
 | `Ctrl-a` | Transparent page background |
 | `?` | List every key from your config; `j`/`k`, `d`/`u`, `g`/`G` scroll, `q` closes |
+| `Ctrl-h` / `Ctrl-l` | The note / the PDF (see [Notes](#notes)) |
+| `Ctrl-Space` | The notes layer: `x` hide the note, `s` switch notes, `c` new note |
 | `q`, `:q` | Quit |
 
 Marks belong to the file and are remembered with its position. `:marks` lists them with their pages, `:delm a` deletes mark a and `:delm!` deletes them all.
@@ -79,6 +81,14 @@ Each file gets one small TOML file in `~/.local/state/viewmer/` (or under `$XDG_
 
 The mouse wheel scrolls the panel. Clicking an entry goes there, and clicking its `▸` or `▾` folds it.
 
+## Notes
+
+`Ctrl-h` opens a note beside the PDF, in your editor (helix by default) running in a panel on the left, and the pages move over to the right. The first time, it asks which note: a new one named after the PDF (the title stored in it, or else its file name), one you name, or any note in your vault, which typing filters. A new note starts from your template with a link back to the PDF; the PDF remembers its note, and opens it straight away after that, at its end.
+
+`Ctrl-l` goes back to the PDF and `Ctrl-h` to the note again; a click on either side does the same. While the note has the keys, every key goes to the editor except `Ctrl-h`, `Ctrl-l` and `Ctrl-Space`, which shows the notes layer: `x` hides the note, `s` switches to another note, `c` makes a new one with a name you type. The mouse wheel scrolls whichever side it's over. The contents panel opens on top of the note.
+
+The note is saved whenever you leave it: going back to the PDF, hiding it, leaving the terminal window, quitting, or closing the window. viewmer starts helix with your own config plus saving on losing focus, and from the vault folder, so its settings for the vault apply. Hiding the note keeps the editor running, so it comes back as you left it; `:q` in the editor closes the panel. If the PDF moves and comes back under its permanent ID, the link in its note moves along.
+
 ## Search
 
 Search ignores case. All matches are highlighted in yellow, the current one in orange, and the search runs again when the file reloads.
@@ -88,7 +98,9 @@ Search ignores case. All matches are highlighted in yellow, the current one in o
 The config is created on first run at `~/.config/viewmer/config.toml` (or under `$XDG_CONFIG_HOME` when that is set), with a line about each setting. A config and theme from earlier versions, kept in `~/Library/Application Support/viewmer` on macOS, move there on their own:
 
 - `[viewer]`: `scroll_step`, `zoom_step` (percent of the page width), `sharpness` (how finely pages are drawn), `page_gap`, `invert_wheel`, `link_hints` (where a hovered link points) and `remember_position`.
-- `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `SetMark`, `GoToMark`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `HalfPageDown`, `HalfPageUp`, `ZoomIn`, `ZoomOut`, `FitWidth`, `FitPage`, `CenterViewer`, `ToggleRuler`, `ToggleInverse`, `ToggleAlpha`, `ShowHelp` and `Quit`.
+- `[notes]`: `vault` (the notes folder, where the editor starts), `folder` (where new notes go, inside the vault), `editor`, `template` (`{{title}}` becomes the note's name and `{{source}}` the link to the PDF; without `{{source}}`, the link goes on a `Links:` line or after the title) and `width` (percent of the window).
+- `[layers]`: `"keys" = "Name"`. Typing the keys of a layer shows a box with what can follow them.
+- `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `SetMark`, `GoToMark`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `HalfPageDown`, `HalfPageUp`, `ZoomIn`, `ZoomOut`, `FitWidth`, `FitPage`, `CenterViewer`, `ToggleRuler`, `ToggleInverse`, `ToggleAlpha`, `FocusNote`, `FocusPdf`, `HideNote`, `SwitchNote`, `NewNote`, `ShowHelp` and `Quit`. The notes actions bound with Ctrl or Alt also work while the note has the keys.
 
 A config from an older version is brought up to date when viewmer starts: renamed settings keep their values under the new names, settings that are gone are removed, new ones come in with their explanation, and your own comments and order stay. A key whose default moved, such as `Ctrl-o` going from inverting colors to jumping back, moves along when the config still has it as shipped; a key you changed stays as you set it.
 
@@ -96,7 +108,7 @@ A config from an older version is brought up to date when viewmer starts: rename
 
 Colors are in `theme.toml` next to the config, written on first run with every color and what it's for. A color can be `"#1e2030"`, `"#fff"`, `"rgb(30, 32, 48)"`, `"hsl(230, 23%, 15%)"`, a palette number like `8`, a name like `"cyan"` or `"bright-black"`, or `"default"` for the terminal's own color.
 
-Panel backgrounds (`contents.background`, `contents.selected`, `help.background`) and the colors painted on pages (`pages.match`, `pages.current_match`, `pages.ruler`) can be see-through: add two hex digits of opacity, from `00` (clear) to `ff` (solid), as in `"#1e2030cc"`. The page then shows through the panel. A page color without them is mixed in at a strength that keeps the text readable.
+Panel backgrounds (`contents.background`, `contents.selected`, `help.background`, `notes.background`, `notes.selected`, `layer.background`) and the colors painted on pages (`pages.match`, `pages.current_match`, `pages.ruler`) can be see-through: add two hex digits of opacity, from `00` (clear) to `ff` (solid), as in `"#1e2030cc"`. The page then shows through the panel. A page color without them is mixed in at a strength that keeps the text readable.
 
 A mistake in the file doesn't stop viewmer: that color keeps its default, and the status bar says what's wrong.
 
@@ -124,7 +136,7 @@ cargo clippy --all-features -- -D clippy::all
 cargo test --all-features -- --test-threads 1
 ```
 
-The tests cover the page placement and clipping math, which images a frame places again, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, moving retired default keys, key and prompt handling, search stepping, the help list, reading colors and the theme file, the config merge and upgrade, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
+The tests cover the page placement and clipping math, which images a frame places again, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, moving retired default keys, key and prompt handling, search stepping, the help list, reading colors and the theme file, encoding keys, the mouse and pastes for the editor, running a program in the notes panel, naming notes and writing them from a template, the note picker, the config merge and upgrade, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
 
 ## License
 

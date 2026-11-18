@@ -1,7 +1,7 @@
 /* What the main loop keeps besides the viewer, and the remembered position */
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::config::*;
@@ -10,6 +10,7 @@ use crate::globals::*;
 use crate::image::*;
 use crate::input::{reveal_section, show_current_match};
 use crate::jumps::{Jumps, Spot};
+use crate::notes::{EditorSize, Notes};
 use crate::outline::Toc;
 use crate::ruler::{Lines, Ruler};
 use crate::state::*;
@@ -61,6 +62,9 @@ pub struct App {
     pub fatal: Option<String>,
     /* The images placed by the last frame; `None` forces placing them again */
     pub shown: Option<Shown>,
+    pub notes: Notes,
+    /* The layer whose first keys were typed, with what can follow */
+    pub layer: Option<ui::Layer>,
 }
 
 /* Every image placed in a frame. A frame that would place the same ones leaves them
@@ -158,27 +162,42 @@ pub fn throttle(last: &mut Option<Instant>) -> bool {
     true
 }
 
-/* Opens the remembered state of `file` and goes back to it */
-pub fn open_store(
-    file: &str,
-    id: Option<String>,
-    viewer: &mut Viewer,
-    marks: &mut BTreeMap<char, Spot>,
-) -> Option<Store> {
+/* Opens the remembered state of `file` and goes back to it: the place, the marks and
+ * the note. A file that moved since gets the link in its note moved along. */
+pub fn open_store(file: &str, id: Option<String>, viewer: &mut Viewer, app: &mut App) {
     if !CONFIG.get().unwrap().viewer.remember_position {
-        return None;
+        return;
     }
-    let mut store = Store::new(Store::default_dir()?, id, Path::new(file));
+    let Some(dir) = Store::default_dir() else {
+        return;
+    };
+    let mut store = Store::new(dir, id, Path::new(file));
     if let Some(state) = store.load() {
         let _ = viewer.set_page_offset(state.page_offset);
         viewer.restore(state.page, state.within, state.zoom);
-        *marks = state
+        app.marks = state
             .marks
             .iter()
             .filter_map(|(k, spot)| Some((mark_letter(k)?, *spot)))
             .collect();
+        app.notes.remembered = state.note.as_deref().map(PathBuf::from);
+        if let (Some(old), Some(note)) = (&state.path, &app.notes.remembered) {
+            if old != store.path() {
+                move_note_link(note, Path::new(old), Path::new(store.path()));
+            }
+        }
     }
-    Some(store)
+    app.store = Some(store);
+}
+
+/* Points the note's link to the PDF at its new place */
+fn move_note_link(note: &Path, old: &Path, new: &Path) {
+    let Ok(text) = std::fs::read_to_string(note) else {
+        return;
+    };
+    if let Some(moved) = crate::notes::note::move_link(&text, old, new) {
+        let _ = std::fs::write(note, moved);
+    }
 }
 
 /* A mark's letter from its name in the state file */
@@ -190,14 +209,19 @@ pub fn mark_letter(name: &str) -> Option<char> {
     }
 }
 
-pub fn file_state(viewer: &Viewer, marks: &BTreeMap<char, Spot>) -> FileState {
+pub fn file_state(viewer: &Viewer, app: &App) -> FileState {
     let (page, within, zoom) = viewer.position();
     FileState {
         page,
         within,
         zoom,
         page_offset: viewer.page_offset(),
-        marks: marks.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+        marks: app.marks.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+        note: app
+            .notes
+            .remembered
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned()),
         ..FileState::default()
     }
 }
@@ -206,7 +230,7 @@ pub fn file_state(viewer: &Viewer, marks: &BTreeMap<char, Spot>) -> FileState {
  * writes once, after it stops */
 pub fn schedule_save(app: &mut App, viewer: &Viewer) {
     let Some(store) = &app.store else { return };
-    let state = file_state(viewer, &app.marks);
+    let state = file_state(viewer, app);
     if !store.is_dirty(&state) {
         app.save_due = None;
     } else if app.save_due.as_ref().is_none_or(|(s, _)| *s != state) {
@@ -240,6 +264,40 @@ pub fn ruler_band(app: &mut App, viewer: &Viewer) -> Option<(f64, f64, f64, f64)
     ))
 }
 
+/* The size of the editor in the notes panel: the panel inside its border */
+pub fn editor_size() -> EditorSize {
+    let inner = ui::inner();
+    let (_, _, width, height) = ui::notes_rect(&inner, CONFIG.get().unwrap().notes.width);
+    let (cols, rows) = (width.saturating_sub(2), height.saturating_sub(2));
+    EditorSize {
+        cols,
+        rows,
+        pixels: (
+            (cols as f64 * inner.pxpercol) as u16,
+            (rows as f64 * inner.pxperrow) as u16,
+        ),
+    }
+}
+
+/* Lays the pages out beside the notes panel while it's open, and over the whole width
+ * when it isn't, keeping the zoom and the place; the editor follows the panel's size */
+pub fn apply_layout(viewer: &mut Viewer, app: &mut App) {
+    let cols = if app.notes.open {
+        ui::notes_rect(&ui::inner(), CONFIG.get().unwrap().notes.width).2
+    } else {
+        0
+    };
+    let before = ui::viewport();
+    ui::set_notes_cols(cols);
+    if ui::viewport() != before {
+        viewer.refit();
+    }
+    let size = editor_size();
+    if let Some(editor) = &mut app.notes.editor {
+        editor.resize(size.cols, size.rows, size.pixels);
+    }
+}
+
 /* Takes in what the renderer sends: a (re)loaded document, a page image or search
  * results. `true` means the page images still queued are for an older version and
  * should be dropped. */
@@ -259,7 +317,9 @@ pub fn handle_result(
             labels,
             outline,
             id,
+            title,
         } => {
+            app.notes.title = title;
             let uninit = viewer.is_uninit();
 
             viewer.update_metadata(
@@ -273,7 +333,7 @@ pub fn handle_result(
             viewer.center_viewer();
             if uninit {
                 viewer.scale_page2terminal();
-                app.store = open_store(file, id, viewer, &mut app.marks);
+                open_store(file, id, viewer, app);
             } else if let Some(store) = app.store.as_mut() {
                 store.set_id(id);
             }

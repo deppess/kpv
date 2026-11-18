@@ -3,8 +3,9 @@
 use std::io::{self, Write};
 use std::time::Duration;
 
+use alacritty_terminal::vte::ansi::CursorShape;
 use crossbeam_channel::Receiver;
-use crossterm::cursor::MoveTo;
+use crossterm::cursor::{Hide, MoveTo, SetCursorStyle, Show};
 use crossterm::terminal::{
     BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate,
 };
@@ -15,12 +16,13 @@ use crate::config::*;
 use crate::drivers;
 use crate::drivers::commands::{ClearImages, PointerShape, SetPointerShape};
 use crate::drivers::graphics::{self, GraphicsResponse};
+use crate::globals::CONFIG;
 use crate::image::*;
 use crate::outline::{breadcrumb, current_section};
 use crate::state::*;
 use crate::theme::{paint, Slot};
 use crate::threads::renderer::{page_color, Renderer};
-use crate::ui::{self, toc_visible, viewport, Segment, TocRow};
+use crate::ui::{self, inner, toc_visible, viewport, NotesBody, Segment, TocRow};
 use crate::viewer::*;
 
 pub fn write_error(e: io::Error) -> String {
@@ -86,6 +88,9 @@ pub fn draw_frame(
         graphics::terminal_graphics_hide(id)?;
     }
     app.shown = Some(shown);
+    if app.notes.open {
+        draw_notes(app).map_err(write_error)?;
+    }
     if let Mode::Help { scroll } = app.mode {
         ui::draw_help(&app.help, scroll).map_err(write_error)?;
     }
@@ -95,8 +100,16 @@ pub fn draw_frame(
     if app.mode == Mode::Toc {
         draw_toc(app, viewer, section).map_err(write_error)?;
     }
+    if let Some(layer) = &app.layer {
+        ui::draw_layer(layer).map_err(write_error)?;
+    }
 
     ui::draw_frame(title, &status_segments(app, viewer, section)).map_err(write_error)?;
+    match editor_cursor(app) {
+        Some((col, row, style)) => queue!(out, MoveTo(col, row), style, Show),
+        None => queue!(out, Hide),
+    }
+    .map_err(write_error)?;
     queue!(out, EndSynchronizedUpdate).map_err(write_error)?;
     out.flush().map_err(write_error)?;
     Ok(displayed)
@@ -104,7 +117,7 @@ pub fn draw_frame(
 
 /* Tints under the see-through panels on screen */
 fn tints(app: &App) -> Vec<Tint> {
-    let vp = viewport();
+    let vp = inner();
     let mut tints = Vec::new();
     let mut add = |slot, id, z, (left, top, width, height): (u16, u16, u16, u16)| {
         if paint(slot).see_through() && width > 0 && height > 0 {
@@ -156,7 +169,101 @@ fn tints(app: &App) -> Vec<Tint> {
         ),
         _ => (),
     }
+    if app.notes.open {
+        let rect = ui::notes_rect(&vp, CONFIG.get().unwrap().notes.width);
+        add(
+            Slot::NotesBackground,
+            graphics::NOTES_TINT_ID,
+            graphics::PANEL_Z,
+            rect,
+        );
+        if let Some(picker) = &app.notes.picker {
+            let row = picker.selected.checked_sub(picker.scroll);
+            if let Some(row) = row.filter(|&r| r < ui::picker_visible(rect.3)) {
+                add(
+                    Slot::NotesSelected,
+                    graphics::NOTES_SELECTED_TINT_ID,
+                    graphics::SELECTED_Z,
+                    (
+                        rect.0 + 1,
+                        rect.1 + 1 + row as u16,
+                        rect.2.saturating_sub(2),
+                        1,
+                    ),
+                );
+            }
+        }
+    }
+    if let Some(layer) = &app.layer {
+        add(
+            Slot::LayerBackground,
+            graphics::LAYER_TINT_ID,
+            graphics::LAYER_Z,
+            ui::layer_rect(&vp, layer),
+        );
+    }
     tints
+}
+
+/* The notes panel: the note picker or the editor's screen */
+fn draw_notes(app: &App) -> io::Result<()> {
+    let rect = ui::notes_rect(&ui::inner(), CONFIG.get().unwrap().notes.width);
+    let notes = &app.notes;
+    let title = match (&notes.picker, &notes.note) {
+        (None, Some(note)) => note
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        _ => "Notes".to_owned(),
+    };
+    if let Some(picker) = &notes.picker {
+        let visible = ui::picker_visible(rect.3);
+        let rows: Vec<_> = picker
+            .rows()
+            .into_iter()
+            .skip(picker.scroll)
+            .take(visible)
+            .collect();
+        let footer = match (&picker.naming, picker.filter.is_empty()) {
+            (Some(name), _) => format!("Name: {}▏ · ⏎ make it · Esc back", name),
+            (None, false) => format!("{}▏ · ⏎ open · Esc clears", picker.filter),
+            (None, true) => "type to find a note · ⏎ open · Esc close".to_owned(),
+        };
+        return ui::draw_notes(
+            rect,
+            &title,
+            notes.focused,
+            NotesBody::Picker(&rows, footer),
+        );
+    }
+    let Some(editor) = &notes.editor else {
+        return Ok(());
+    };
+    let screen = editor.screen(
+        paint(Slot::NotesText).color(),
+        ui::background(Slot::NotesBackground),
+    );
+    ui::draw_notes(rect, &title, notes.focused, NotesBody::Editor(&screen))
+}
+
+/* Where to show the editor's cursor, and how, while the note has the keys */
+fn editor_cursor(app: &App) -> Option<(u16, u16, SetCursorStyle)> {
+    let notes = &app.notes;
+    if !(notes.open && notes.focused) || notes.picker.is_some() || app.layer.is_some() {
+        return None;
+    }
+    let (col, row, shape) = notes.editor.as_ref()?.cursor()?;
+    let (left, top, width, height) =
+        ui::notes_rect(&ui::inner(), CONFIG.get().unwrap().notes.width);
+    if col + 2 >= width || row + 2 >= height {
+        return None;
+    }
+    let style = match shape {
+        CursorShape::Underline => SetCursorStyle::SteadyUnderScore,
+        CursorShape::Beam => SetCursorStyle::SteadyBar,
+        _ => SetCursorStyle::SteadyBlock,
+    };
+    Some((left + 1 + col, top + 1 + row, style))
 }
 
 /* Sends the one-pixel images that tint see-through panels */
@@ -165,6 +272,9 @@ pub fn send_tints() {
         (Slot::ContentsBackground, graphics::CONTENTS_TINT_ID),
         (Slot::ContentsSelected, graphics::SELECTED_TINT_ID),
         (Slot::HelpBackground, graphics::HELP_TINT_ID),
+        (Slot::NotesBackground, graphics::NOTES_TINT_ID),
+        (Slot::NotesSelected, graphics::NOTES_SELECTED_TINT_ID),
+        (Slot::LayerBackground, graphics::LAYER_TINT_ID),
     ] {
         let p = paint(slot);
         if let (true, Some([r, g, b]), Some(a)) = (p.see_through(), p.rgb(), p.alpha()) {
@@ -190,6 +300,9 @@ pub fn status_segments(
         }
         Mode::Help { .. } => segments.push(Segment::new("HELP", Slot::StatusHelp)),
         Mode::Toc => segments.push(Segment::new("TOC", Slot::StatusContents)),
+        Mode::Normal if app.notes.open && app.notes.focused => {
+            segments.push(Segment::new("NOTE", Slot::StatusNotes))
+        }
         Mode::Normal => segments.push(Segment::new("NOR", Slot::StatusNormal)),
     }
     if viewer.pages() > 0 {
@@ -233,7 +346,7 @@ pub fn draw_toc(app: &App, viewer: &Viewer, section: Option<usize>) -> io::Resul
     let visible: Vec<TocRow> = rows
         .iter()
         .skip(toc.scroll)
-        .take(toc_visible(&viewport()))
+        .take(toc_visible(&inner()))
         .map(|&i| {
             let entry = &toc.entries[i];
             TocRow {

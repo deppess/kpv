@@ -34,6 +34,24 @@ link_hints = true
 # Open every file where you left it, with its marks
 remember_position = true
 
+[notes]
+# The folder your notes are in. The editor starts there, so its own settings for
+# that folder (language servers and the like) apply.
+vault = "~/Notes"
+# Where new notes go, inside the vault; empty for the vault itself
+folder = ""
+# The editor in the notes panel
+editor = "hx"
+# A note to start new ones from, where {{title}} becomes the note's name and
+# {{source}} a link to the PDF. Empty for a title and a link.
+template = ""
+# How wide the notes panel is, in percent of the window
+width = 45
+
+# Names for keys that start a layer, shown above what can follow them
+[layers]
+"Ctrl+Space" = "Notes"
+
 # Keys, as "key" = "Action". The actions are listed in the README.
 [bindings]
 "Ctrl+a" = "ToggleAlpha"
@@ -76,6 +94,11 @@ remember_position = true
 "Esc" = "ClearSearch"
 "o" = "ShowOutline"
 "Tab" = "ShowOutline"
+"Ctrl+h" = "FocusNote"
+"Ctrl+l" = "FocusPdf"
+"Ctrl+Space x" = "HideNote"
+"Ctrl+Space s" = "SwitchNote"
+"Ctrl+Space c" = "NewNote"
 "#;
 
 /* Hate on me for those global singletons as much as you want. */
