@@ -60,7 +60,7 @@ Page numbers follow the book. When the PDF carries printed page numbers (roman n
 
 Each file opens where you left it: the same page, the same spot on it and the same zoom, along with its marks and page offset. The position is written two seconds after the view stops moving, on quitting, and when the terminal window closes or viewmer is stopped with `kill`. A position is kept per page rather than in pixels, so it comes back right in a window of another size.
 
-Each file gets one small TOML file under `~/Library/Application Support/viewmer/state/` (macOS) or `~/.local/state/viewmer/` (Linux). A file is found by the permanent ID inside the PDF, so moving or renaming it keeps its place, and by its path, for PDFs without an ID and for LaTeX output that gets a new one on every build. Files are replaced in one step, so a crash or two viewers on one file never leave a broken one, and a broken or unknown file is ignored. `remember_position = false` turns it off.
+Each file gets one small TOML file in `~/.local/state/viewmer/` (or under `$XDG_STATE_HOME`); files from where earlier versions kept them move there on their own. A file is found by the permanent ID inside the PDF, so moving or renaming it keeps its place, and by its path, for PDFs without an ID and for LaTeX output that gets a new one on every build. Files are replaced in one step, so a crash or two viewers on one file never leave a broken one, and a broken or unknown file is ignored. `remember_position = false` turns it off.
 
 ## Table of contents
 
