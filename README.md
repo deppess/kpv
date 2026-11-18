@@ -116,7 +116,7 @@ cargo clippy --all-features -- -D clippy::all
 cargo test --all-features -- --test-threads 1
 ```
 
-The tests cover the page placement and clipping math, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, moving retired default keys, key and prompt handling, search stepping, the help list, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
+The tests cover the page placement and clipping math, which images a frame places again, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, moving retired default keys, key and prompt handling, search stepping, the help list, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
 
 ## License
 

@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{
     drivers::graphics::*,
-    globals::IMAGE_PADDING,
+    globals::{IMAGE_PADDING, RUNNING},
     ui::{viewport, Viewport},
     viewer::DisplayRect,
 };
@@ -37,34 +37,19 @@ impl Image {
         Ok(image)
     }
 
-    #[allow(dead_code)]
     pub fn id(&self) -> usize {
         self.id
     }
 
-    #[allow(dead_code)]
     pub fn size(&self) -> usize {
         self.data.len()
     }
 
-    #[allow(dead_code)]
-    pub fn check(&self) -> Result<(), String> {
-        /* The first pixels should be invisible and therefore we have an easy if
-         * the image still exists */
-        terminal_graphics_display_image(self.id, 1, 1, (1, 1, 1, 1), 2, 2)?;
-        Ok(())
-    }
-
-    pub fn display(&self, rect: DisplayRect) -> Result<bool, String> {
-        /* `true` indicates that the image was actually displayed and was not
-         * tried to be displayed outside of the viewport */
+    /* Where the image goes to show a page at `rect`; `None` when that is outside the
+     * viewport */
+    pub fn placement(&self, rect: DisplayRect) -> Option<Placement> {
         let padding = *IMAGE_PADDING.get().unwrap() as f64;
-        let Some(p) = placement(rect, self.dimensions, padding, &viewport()) else {
-            return Ok(false);
-        };
-
-        terminal_graphics_display_image(self.id, p.col, p.row, p.crop, p.cols, p.rows)?;
-        Ok(true)
+        placement(rect, self.dimensions, padding, &viewport())
     }
 
     pub fn transfer(&self) -> Result<(), String> {
@@ -118,9 +103,40 @@ pub fn invert_pixels(samples: &mut [u8], n: usize) {
     }
 }
 
+impl Drop for Image {
+    /* Frees the copy kitty keeps; not on the way out, when the terminal is being
+     * given back */
+    fn drop(&mut self) {
+        if RUNNING.load(Ordering::Acquire) {
+            let _ = terminal_graphics_delete_image(self.id);
+        }
+    }
+}
+
+/* A page image in a frame: placed at `at`, or with `None` kept ready just outside the
+ * view, which is placed out of sight to check that kitty still has it */
+#[derive(Clone, Debug, PartialEq)]
+pub struct PagePlacement {
+    pub page: usize,
+    pub image: usize,
+    pub at: Option<Placement>,
+}
+
+impl PagePlacement {
+    pub fn place(&self) -> Result<(), String> {
+        match &self.at {
+            Some(p) => terminal_graphics_display_image(
+                self.image, p.col, p.row, p.crop, p.cols, p.rows,
+            ),
+            /* The top-left padding pixel, which is clear */
+            None => terminal_graphics_display_image(self.image, 1, 1, (1, 1, 1, 1), 2, 2),
+        }
+    }
+}
+
 /* Where and how much of a page image to show: a 1-indexed cell position, the crop of
  * the padded bitmap in pixels, and the size in cells */
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Placement {
     pub col: usize,
     pub row: usize,

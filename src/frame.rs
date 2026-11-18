@@ -29,34 +29,60 @@ pub fn write_error(e: io::Error) -> String {
 /* Longest wait for kitty to confirm placing a page */
 const RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
 
-/* Draws one frame in a synchronized update and returns the pages placed in it */
+/* Draws one frame in a synchronized update and returns the pages placed in it, whose
+ * answers from kitty are due. Text is drawn every time; page images and the ruler only
+ * when they differ from the last frame's, so that a frame that only changes text
+ * (prompts, the contents panel, the status bar) costs kitty no image work. */
 pub fn draw_frame(
     title: &str,
     viewer: &mut Viewer,
     renderer: &Renderer,
     app: &mut App,
 ) -> Result<Vec<usize>, String> {
+    let shown = match app.mode {
+        Mode::Help { .. } => Shown {
+            pages: Vec::new(),
+            ruler: None,
+        },
+        _ => Shown {
+            pages: viewer.plan_pages(renderer),
+            ruler: ruler_band(app, viewer).and_then(|b| ruler_placement(b, &viewport())),
+        },
+    };
+    let Changes {
+        clear,
+        pages,
+        ruler,
+    } = changes(app.shown.as_ref(), &shown);
+
     let mut out = io::stdout();
     queue!(out, BeginSynchronizedUpdate).map_err(write_error)?;
+    if clear {
+        queue!(out, ClearImages).map_err(write_error)?;
+    }
     /* Erase from the top-left corner down, never the whole display: in kitty,
      * erasing the whole display (ED 2) also deletes images that have no placement
      * yet, i.e. pages uploaded since the last frame, so they could never be shown */
-    queue!(
-        out,
-        ClearImages,
-        MoveTo(0, 0),
-        Clear(ClearType::FromCursorDown)
-    )
-    .map_err(write_error)?;
+    queue!(out, MoveTo(0, 0), Clear(ClearType::FromCursorDown)).map_err(write_error)?;
 
-    let displayed = if let Mode::Help { scroll } = app.mode {
+    let mut displayed = Vec::new();
+    for page in &pages {
+        page.place()?;
+        displayed.push(page.page);
+    }
+    if ruler {
+        match &shown.ruler {
+            Some(ruler) => place_ruler(app, ruler),
+            None if !clear => {
+                let _ = drivers::graphics::terminal_graphics_hide_ruler();
+            }
+            None => (),
+        }
+    }
+    app.shown = Some(shown);
+    if let Mode::Help { scroll } = app.mode {
         ui::draw_help(&app.help, scroll).map_err(write_error)?;
-        Vec::new()
-    } else {
-        let displayed = viewer.display_pages(renderer)?;
-        draw_ruler(app, viewer);
-        displayed
-    };
+    }
 
     let (page, y) = viewer.reading_spot();
     let section = current_section(&app.toc.entries, page, y);
@@ -150,16 +176,16 @@ pub fn draw_toc(app: &App, viewer: &Viewer, section: Option<usize>) -> io::Resul
     ui::draw_toc(&visible, &position, &footer)
 }
 
-/* Lays the ruler over its line; the image is sent again only when it changes */
-pub fn draw_ruler(app: &mut App, viewer: &Viewer) {
+/* Lays the ruler over its line; the image is sent again only when its pixels change,
+ * not when it just moves */
+fn place_ruler(app: &mut App, placement: &RulerPlacement) {
     const COLOR: [u8; 4] = [90, 160, 255, 70];
-    let Some(placement) =
-        ruler_band(app, viewer).and_then(|b| ruler_placement(b, &viewport()))
-    else {
-        return;
-    };
-    if app.ruler_image.as_ref() != Some(&placement) {
-        let data = ruler_bitmap(&placement, COLOR);
+    let same_pixels = app.ruler_image.as_ref().is_some_and(|old| {
+        (old.width, old.height, old.band)
+            == (placement.width, placement.height, placement.band)
+    });
+    if !same_pixels {
+        let data = ruler_bitmap(placement, COLOR);
         if drivers::graphics::terminal_graphics_transfer_bitmap(
             drivers::graphics::RULER_ID,
             placement.width,
@@ -208,6 +234,8 @@ pub fn check_placements(
             continue;
         }
 
+        /* Place everything again next frame, once the page is sent again */
+        app.shown = None;
         if !viewer.schedule_transfer(page) {
             app.message = Some(format!(
                 "kitty rejects page {}: {}",

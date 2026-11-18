@@ -39,6 +39,14 @@ pub fn terminal_graphics_test_support() -> Result<(), String> {
     Ok(())
 }
 
+/* Deletes an image and its placements from kitty, quietly */
+pub fn terminal_graphics_delete_image(id: usize) -> Result<(), String> {
+    let mut handle = stdout().lock();
+    write!(handle, "\x1B_Gq=2,a=d,d=I,i={};\x1B\\", id)
+        .and_then(|_| handle.flush())
+        .map_err(io_error)
+}
+
 pub fn terminal_graphics_transfer_bitmap(
     id: usize,
     width: usize,
@@ -115,8 +123,9 @@ const RULER_Z: i64 = -1_073_741_825;
 /* The ruler's image ID; page images count up from 1 and never get this far */
 pub const RULER_ID: usize = 0x7FFF_0001;
 
-/* Shows the ruler image over `cols` x `rows` cells from a 1-indexed cell. Quiet, so
- * no answer gets mixed up with the answers for pages. */
+/* Shows the ruler image over `cols` x `rows` cells from a 1-indexed cell, moving it
+ * if it's shown already (it has the one placement, 1). Quiet, so no answer gets mixed
+ * up with the answers for pages. */
 pub fn terminal_graphics_place_ruler(
     col: usize,
     row: usize,
@@ -126,11 +135,19 @@ pub fn terminal_graphics_place_ruler(
     let mut handle = stdout().lock();
     write!(
         handle,
-        "\x1B[s\x1B[{};{}H\x1B_Gq=2,z={},a=p,C=1,i={},c={},r={};\x1B\\\x1B[u",
+        "\x1B[s\x1B[{};{}H\x1B_Gq=2,z={},a=p,C=1,i={},p=1,c={},r={};\x1B\\\x1B[u",
         row, col, RULER_Z, RULER_ID, cols, rows
     )
     .and_then(|_| handle.flush())
     .map_err(io_error)
+}
+
+/* Takes the ruler off the screen and keeps its image */
+pub fn terminal_graphics_hide_ruler() -> Result<(), String> {
+    let mut handle = stdout().lock();
+    write!(handle, "\x1B_Gq=2,a=d,d=i,i={};\x1B\\", RULER_ID)
+        .and_then(|_| handle.flush())
+        .map_err(io_error)
 }
 
 fn io_error(x: std::io::Error) -> String {

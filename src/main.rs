@@ -184,6 +184,7 @@ fn main() {
         save_due: None,
         throttle: LastExecuted::default(),
         fatal: None,
+        shown: None,
     };
 
     let mut current_mouse = MouseEvent {
@@ -228,6 +229,11 @@ fn main() {
 
                 if handle_result(result, &arg, &mut viewer, &renderer, &mut app) {
                     result_receiver.clear_priority(1);
+                }
+                /* Take in everything the renderer has ready before drawing, so that
+                 * pages arriving together are placed in one frame */
+                if !result_receiver.is_empty() && app.fatal.is_none() {
+                    continue 'main;
                 }
             }
             2 => match take(&file_reload) {

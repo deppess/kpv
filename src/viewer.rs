@@ -9,7 +9,11 @@ use crossterm::event::MouseEvent;
 use mupdf::{link::LinkDestination, DestinationKind, Link};
 
 use crate::{
-    globals::CONFIG, image::Image, jumps::Spot, labels, threads::renderer::*,
+    globals::CONFIG,
+    image::{Image, PagePlacement},
+    jumps::Spot,
+    labels,
+    threads::renderer::*,
     ui::viewport,
 };
 
@@ -632,84 +636,63 @@ impl Viewer {
         self.invalidated.remove(&page);
     }
 
-    fn load_or_display(
+    /* Asks the renderer for the page when its image is missing or out of date, and
+     * plans its image: at `rect`, or with `None` kept ready out of sight. Until a new
+     * image arrives the old one stands in, so a page never flashes blank. */
+    fn plan_page(
         &mut self,
         page: usize,
-        rect: DisplayRect,
-        preload: bool,
+        rect: Option<DisplayRect>,
         renderer: &Renderer,
-    ) -> Result<Option<usize>, String> {
-        if (!self.images.contains_key(&page) || self.invalidated.contains_key(&page))
+    ) -> Option<PagePlacement> {
+        let stale =
+            !self.images.contains_key(&page) || self.invalidated.contains_key(&page);
+        if stale
             && !self.scheduled4render.contains_key(&page)
+            && renderer.send_action(RendererAction::Display(page)).is_ok()
         {
-            let res = renderer.send_action(RendererAction::Display(page));
-            if res.is_ok() {
-                self.scheduled4render.insert(page, ());
-            }
-
-            return Ok(None);
+            self.scheduled4render.insert(page, ());
         }
 
-        let Some(image) = self.images.get(&page) else {
-            return Ok(None);
+        let image = self.images.get(&page)?.read().unwrap();
+        let at = match rect {
+            Some(rect) => Some(image.placement(rect)?),
+            None => None,
         };
-        let image = image.read().unwrap();
-        if preload {
-            image.check()?;
-            return Ok(Some(page));
-        }
-        Ok(image.display(rect)?.then_some(page))
+        Some(PagePlacement {
+            page,
+            image: image.id(),
+            at,
+        })
     }
 
-    /* Displays the pages based on the internal state of the offset.
-     * Calculates how many pages should be rendered based on the terminal size */
-    pub fn display_pages(&mut self, renderer: &Renderer) -> Result<Vec<usize>, String> {
-        let config = CONFIG.get().unwrap();
-        let preloaded = config.viewer.pages_preloaded;
-
-        /* Track what images have been actually displayed on the screen to
-         * later check if there occured errors during the display */
-        let mut displayed = Vec::new();
-        let none_rect = DisplayRect {
-            x: 0,
-            y: 0,
-            width: 0,
-            height: 0,
-        };
+    /* The page images a frame shows: the pages in view, and a few before and after
+     * them kept ready so that scrolling doesn't show blank pages */
+    pub fn plan_pages(&mut self, renderer: &Renderer) -> Vec<PagePlacement> {
+        let preloaded = CONFIG.get().unwrap().viewer.pages_preloaded;
+        let mut plan = Vec::new();
 
         /* The index of the first rendered page */
         let mut page_index = self.page_first();
         if self.cumulative_heights.len() <= page_index {
-            return Ok(displayed);
+            return plan;
         }
 
-        /* Preload N pages before the first displayed page to avoid flickering pages */
         for i in 0..usize::min(preloaded, page_index) {
-            let r =
-                self.load_or_display(page_index - 1 - i, none_rect, true, renderer)?;
-            if let Some(page) = r {
-                displayed.push(page);
-            }
+            plan.extend(self.plan_page(page_index - 1 - i, None, renderer));
         }
 
         for (page, rect) in self.calculate_display_bounds() {
-            let r = self.load_or_display(page, rect, false, renderer)?;
-            if let Some(page) = r {
-                displayed.push(page);
-            }
+            plan.extend(self.plan_page(page, Some(rect), renderer));
             page_index += 1;
         }
 
-        /* Preload N pages after the last displayed page */
         for _ in 0..usize::min(preloaded, self.cumulative_heights.len() - page_index) {
-            let r = self.load_or_display(page_index, none_rect, true, renderer)?;
-            if let Some(page) = r {
-                displayed.push(page);
-            }
+            plan.extend(self.plan_page(page_index, None, renderer));
             page_index += 1;
         }
 
-        Ok(displayed)
+        plan
     }
 
     /* Sends a page image again after kitty failed to place it. Gives up after a few

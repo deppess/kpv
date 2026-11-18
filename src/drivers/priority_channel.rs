@@ -61,6 +61,10 @@ impl<T, const U: usize> PriorityReceiver<T, U> {
         self.receivers[priority].try_recv()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.receivers.iter().all(Receiver::is_empty)
+    }
+
     #[allow(dead_code)]
     pub fn clear_priority(&self, priority: usize) {
         clear_channel!(self.receivers[priority]);

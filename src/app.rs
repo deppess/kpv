@@ -58,6 +58,57 @@ pub struct App {
     pub throttle: LastExecuted,
     /* Why the viewer has to stop: the terminal or a helper thread is gone */
     pub fatal: Option<String>,
+    /* The images placed by the last frame; `None` forces placing them again */
+    pub shown: Option<Shown>,
+}
+
+/* Every image placed in a frame. A frame that would place the same ones leaves them
+ * alone and redraws only the text. */
+#[derive(Clone, Debug, PartialEq)]
+pub struct Shown {
+    pub pages: Vec<PagePlacement>,
+    pub ruler: Option<RulerPlacement>,
+}
+
+impl Shown {
+    /* The pages that can be seen, without the ones kept ready out of sight */
+    fn in_view(&self) -> Vec<&PagePlacement> {
+        self.pages.iter().filter(|p| p.at.is_some()).collect()
+    }
+}
+
+/* What a frame does to kitty's images to go from showing `old` to `new` */
+#[derive(Debug, PartialEq)]
+pub struct Changes {
+    /* Take every placement down first */
+    pub clear: bool,
+    /* The page images to place */
+    pub pages: Vec<PagePlacement>,
+    /* Place or hide the ruler */
+    pub ruler: bool,
+}
+
+/* Everything is placed again when what's in view changes. A page kept ready that
+ * arrives on its own changes nothing in view and is placed by itself, and the ruler
+ * moves by itself. */
+pub fn changes(old: Option<&Shown>, new: &Shown) -> Changes {
+    match old {
+        Some(old) if old.in_view() == new.in_view() => Changes {
+            clear: false,
+            pages: new
+                .pages
+                .iter()
+                .filter(|p| !old.pages.contains(p))
+                .cloned()
+                .collect(),
+            ruler: old.ruler != new.ruler,
+        },
+        _ => Changes {
+            clear: true,
+            pages: new.pages.clone(),
+            ruler: true,
+        },
+    }
 }
 
 /* Sends `action` to the renderer; a renderer that stopped ends the viewer */
@@ -229,5 +280,93 @@ pub fn handle_result(
             }
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn page(page: usize, image: usize, row: Option<usize>) -> PagePlacement {
+        PagePlacement {
+            page,
+            image,
+            at: row.map(|row| Placement {
+                col: 2,
+                row,
+                crop: (0, 0, 100, 100),
+                cols: 10,
+                rows: 5,
+            }),
+        }
+    }
+
+    fn ruler(row: usize) -> RulerPlacement {
+        RulerPlacement {
+            col: 2,
+            row,
+            cols: 10,
+            rows: 1,
+            width: 100,
+            height: 20,
+            band: (0, 2, 100, 16),
+        }
+    }
+
+    fn shown(pages: Vec<PagePlacement>, ruler: Option<RulerPlacement>) -> Shown {
+        Shown { pages, ruler }
+    }
+
+    #[test]
+    fn the_first_frame_places_everything() {
+        let new = shown(vec![page(0, 1, Some(2)), page(1, 2, None)], Some(ruler(3)));
+        let c = changes(None, &new);
+        assert!(c.clear && c.ruler);
+        assert_eq!(c.pages, new.pages);
+    }
+
+    #[test]
+    fn the_same_view_places_nothing() {
+        let old = shown(vec![page(0, 1, Some(2)), page(1, 2, None)], Some(ruler(3)));
+        let c = changes(Some(&old), &old.clone());
+        assert_eq!(
+            c,
+            Changes {
+                clear: false,
+                pages: vec![],
+                ruler: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_page_kept_ready_is_placed_by_itself() {
+        let old = shown(vec![page(0, 1, Some(2))], None);
+        let new = shown(vec![page(0, 1, Some(2)), page(1, 2, None)], None);
+        let c = changes(Some(&old), &new);
+        assert!(!c.clear && !c.ruler);
+        assert_eq!(c.pages, vec![page(1, 2, None)]);
+    }
+
+    #[test]
+    fn moving_the_ruler_leaves_the_pages() {
+        let old = shown(vec![page(0, 1, Some(2))], Some(ruler(3)));
+        let new = shown(vec![page(0, 1, Some(2))], Some(ruler(4)));
+        let c = changes(Some(&old), &new);
+        assert!(!c.clear && c.ruler);
+        assert!(c.pages.is_empty());
+        let off = changes(Some(&old), &shown(vec![page(0, 1, Some(2))], None));
+        assert!(!off.clear && off.ruler);
+    }
+
+    #[test]
+    fn scrolling_or_a_new_image_in_view_places_everything_again() {
+        let old = shown(vec![page(0, 1, Some(2)), page(1, 2, None)], None);
+        let scrolled = shown(vec![page(0, 1, Some(1)), page(1, 2, None)], None);
+        assert!(changes(Some(&old), &scrolled).clear);
+        let rendered = shown(vec![page(0, 3, Some(2)), page(1, 2, None)], None);
+        let c = changes(Some(&old), &rendered);
+        assert!(c.clear);
+        assert_eq!(c.pages.len(), 2);
     }
 }
