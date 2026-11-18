@@ -23,21 +23,18 @@ pub fn spawn() -> EventThreadData {
     let (sender_gr, receive_gr) = unbounded::<GraphicsResponse>();
     let (sender_ws, receive_ws) = unbounded::<(u16, u16)>();
 
+    /* Stops when the terminal can't be read any more or the main loop is gone; the
+     * main loop sees the closed channels and exits */
     thread::spawn(move || {
         while RUNNING.load(Ordering::Acquire) {
-            match read().expect("Could not read event") {
-                Event::Key(event) => {
-                    sender_input
-                        .try_send(InputEvent::Key(event))
-                        .expect("Could not send key event");
-                }
+            let Ok(event) = read() else { return };
+            let sent = match event {
+                Event::Key(event) => sender_input.send(InputEvent::Key(event)).is_ok(),
                 Event::ApplicationProgramCommand(command) => {
-                    sender_gr
-                        .try_send(GraphicsResponse::new(command.as_bytes()))
-                        .expect("Could not send graphics response");
+                    sender_gr.send(GraphicsResponse::new(&command)).is_ok()
                 }
-                Event::Mouse(event) => match event {
-                    MouseEvent {
+                Event::Mouse(
+                    event @ MouseEvent {
                         kind:
                             kind @ (MouseEventKind::ScrollUp
                             | MouseEventKind::ScrollDown
@@ -45,24 +42,19 @@ pub fn spawn() -> EventThreadData {
                             | MouseEventKind::ScrollRight),
                         modifiers,
                         ..
-                    } => {
-                        sender_input
-                            .try_send(InputEvent::MouseScroll(kind, modifiers))
-                            .expect("Could not send mouse scroll event");
-                        sender_mouse.try_send(event).expect("Could not send mouse");
-                    }
-                    x => {
-                        sender_mouse
-                            .try_send(x)
-                            .expect("Could not send mouse event");
-                    }
-                },
-                Event::Resize(width, height) => {
-                    sender_ws
-                        .try_send((width, height))
-                        .expect("Could not send new window dimensions");
+                    },
+                ) => {
+                    sender_input
+                        .send(InputEvent::MouseScroll(kind, modifiers))
+                        .is_ok()
+                        && sender_mouse.send(event).is_ok()
                 }
-                _ => (),
+                Event::Mouse(event) => sender_mouse.send(event).is_ok(),
+                Event::Resize(width, height) => sender_ws.send((width, height)).is_ok(),
+                _ => true,
+            };
+            if !sent {
+                return;
             }
         }
     });

@@ -14,8 +14,9 @@ pub fn terminal_graphics_test_support() -> Result<(), String> {
     let mut handle1 = stdout().lock();
     handle1
         .write_all(b"\x1B_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1B\\")
-        .unwrap();
-    handle1.flush().unwrap();
+        .and_then(|_| handle1.flush())
+        .map_err(io_error)?;
+    drop(handle1);
 
     /* Timeout since we don't really know yet if the kitty graphics protocol
      * is supported or not */
@@ -25,8 +26,8 @@ pub fn terminal_graphics_test_support() -> Result<(), String> {
         .lock()
         .unwrap()
         .recv_timeout(Duration::from_millis(1000))
-        .map_err(|x| {
-            format!("Could not receive from Graphics Response channel: {}", x)
+        .map_err(|_| {
+            "kitty's graphics protocol is needed, and the terminal did not answer"
         })?;
 
     if !response.payload().contains("OK") {
@@ -35,16 +36,6 @@ pub fn terminal_graphics_test_support() -> Result<(), String> {
             response.payload()
         ))?;
     }
-    Ok(())
-}
-
-#[allow(dead_code)]
-pub fn terminal_graphics_deallocate_id(id: usize) -> Result<(), String> {
-    let mut handle = stdout().lock();
-    write!(handle, "\x1B_Ga=d,d=I,i={};\x1B\\", id).unwrap();
-
-    handle.flush().unwrap();
-
     Ok(())
 }
 
@@ -77,10 +68,9 @@ pub fn terminal_graphics_transfer_bitmap(
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    {
-        let mut tmp_file = File::create(tmp_file_path.as_path()).unwrap();
-        tmp_file.write_all(data).unwrap();
-    }
+    File::create(tmp_file_path.as_path())
+        .and_then(|mut f| f.write_all(data))
+        .map_err(|x| format!("Could not write {}: {}", tmp_file_path.display(), x))?;
 
     /* First chunk with bitmap metadata */
     write!(
@@ -90,13 +80,10 @@ pub fn terminal_graphics_transfer_bitmap(
         id,
         width,
         height,
-        STANDARD.encode(tmp_file_path.to_str().unwrap())
+        STANDARD.encode(tmp_file_path.as_os_str().as_encoded_bytes())
     )
-    .unwrap();
-
-    handle.flush().unwrap();
-
-    Ok(())
+    .and_then(|_| handle.flush())
+    .map_err(io_error)
 }
 
 pub fn terminal_graphics_display_image(
@@ -110,23 +97,13 @@ pub fn terminal_graphics_display_image(
     r: usize,
 ) -> Result<(), String> {
     let mut handle = stdout().lock();
-
-    write!(handle, "\x1B[s\x1B[{};{}H", row, col).unwrap();
-
     write!(
         handle,
-        "\x1B_Gz={},a=p,C=1,i={},x={},y={},w={},h={},c={},r={};\x1B\\",
-        PAGE_Z, id, rect.0, rect.1, rect.2, rect.3, c, r
+        "\x1B[s\x1B[{};{}H\x1B_Gz={},a=p,C=1,i={},x={},y={},w={},h={},c={},r={};\x1B\\\x1B[u",
+        row, col, PAGE_Z, id, rect.0, rect.1, rect.2, rect.3, c, r
     )
-    .unwrap();
-
-    handle.write_all(b"\x1B[u").unwrap();
-
-    handle
-        .flush()
-        .map_err(|x: std::io::Error| format!("Could not flush stdout: {}", x))?;
-
-    Ok(())
+    .and_then(|_| handle.flush())
+    .map_err(io_error)
 }
 
 /* Images at a z-index below -1,073,741,824 are drawn behind cells with a colored
@@ -152,10 +129,12 @@ pub fn terminal_graphics_place_ruler(
         "\x1B[s\x1B[{};{}H\x1B_Gq=2,z={},a=p,C=1,i={},c={},r={};\x1B\\\x1B[u",
         row, col, RULER_Z, RULER_ID, cols, rows
     )
-    .unwrap();
-    handle
-        .flush()
-        .map_err(|x: std::io::Error| format!("Could not flush stdout: {}", x))
+    .and_then(|_| handle.flush())
+    .map_err(io_error)
+}
+
+fn io_error(x: std::io::Error) -> String {
+    format!("Could not write to the terminal: {}", x)
 }
 
 /* A structure which extracts the Kitty graphics response in a lazy way */
@@ -168,8 +147,7 @@ pub struct GraphicsResponse {
 }
 
 impl GraphicsResponse {
-    pub fn new(source: &[u8]) -> Self {
-        let source = std::str::from_utf8(source).unwrap();
+    pub fn new(source: &str) -> Self {
         let spl: Vec<&str> = source.split(';').collect();
 
         Self {

@@ -382,31 +382,24 @@ impl Renderer {
                                 continue;
                             }
 
-                            /* Load the image */
-                            let data = state.cache[page].to_pixmap(
+                            /* A page that can't be drawn stays blank */
+                            let Ok(mut pixmap) = state.cache[page].to_pixmap(
                                 &state.ctm,
                                 &state.cs,
                                 state.alpha,
                                 false,
-                            );
-
-                            if data.is_err() {
+                            ) else {
                                 continue;
-                            }
-
-                            let mut data_unwrapped = data.unwrap();
+                            };
                             if state.inverse {
-                                let n = data_unwrapped.n() as usize;
-                                invert_pixels(data_unwrapped.samples_mut(), n);
+                                let n = pixmap.n() as usize;
+                                invert_pixels(pixmap.samples_mut(), n);
                             }
-                            state.highlight(page, &mut data_unwrapped);
+                            state.highlight(page, &mut pixmap);
 
-                            let res = Image::new(&data_unwrapped);
-                            if res.is_err() {
+                            let Ok(image) = Image::new(&pixmap) else {
                                 continue;
-                            }
-
-                            let image = res.unwrap();
+                            };
                             result_server_sender
                                 .try_send_priority(
                                     RendererResult::Image {
@@ -427,7 +420,9 @@ impl Renderer {
 
         /* ======================== Check and move the threads ======================= */
         if thread_render.is_finished() {
-            thread_render.join().unwrap()?;
+            thread_render
+                .join()
+                .map_err(|_| "The renderer stopped".to_owned())??;
         } else {
             self.thread_render = Some(thread_render);
         }

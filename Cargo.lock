@@ -810,6 +810,7 @@ dependencies = [
  "notify",
  "open",
  "serde",
+ "signal-hook",
  "textwrap",
  "toml",
 ]

@@ -96,26 +96,8 @@ pub static SOFTWARE_ID: OnceLock<String> = OnceLock::new();
 pub static RUNNING: AtomicBool = AtomicBool::new(true);
 
 #[macro_export]
-macro_rules! chan_has {
-    ($chan:expr) => {
-        $chan.peek().is_some()
-    };
-}
-
-#[macro_export]
 macro_rules! clear_channel {
     ($chan:expr) => {
         while let Ok(_) = $chan.try_recv() {}
     };
-}
-
-#[macro_export]
-macro_rules! has_elapsed {
-    ($var:expr) => {{
-        let elapsed = $var.elapsed().unwrap().as_millis();
-        if elapsed >= 500 {
-            $var = SystemTime::now();
-        }
-        elapsed >= 500
-    }};
 }

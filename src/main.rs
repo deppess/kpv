@@ -1,5 +1,6 @@
 mod drivers;
 use crate::drivers::commands::ClearImages;
+use crossbeam_channel::{never, Receiver, TryRecvError};
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
@@ -63,17 +64,20 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::sync::RwLock;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 /* Longest wait for kitty to confirm placing a page */
 const RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
+/* The main loop's wakeup when the position is due to be written, after the channels */
+const SAVE_DUE: usize = 8;
 /* How long the view must stay put before its position is written */
 const SAVE_DELAY: Duration = Duration::from_secs(2);
 
-/* Tracks the last executed times of signals for throattling */
+/* When the slow toggles last ran, so that holding their key can't flood the renderer */
+#[derive(Default)]
 struct LastExecuted {
-    pub alpha: SystemTime,
-    pub inverse: SystemTime,
+    pub alpha: Option<Instant>,
+    pub inverse: Option<Instant>,
 }
 
 /* Everything the main loop keeps besides the viewer itself */
@@ -105,6 +109,8 @@ struct App {
     /* The position waiting to be written, and when */
     save_due: Option<(FileState, Instant)>,
     throttle: LastExecuted,
+    /* Why the viewer has to stop: the terminal or a helper thread is gone */
+    fatal: Option<String>,
 }
 
 fn main() {
@@ -131,23 +137,22 @@ fn main() {
         .unwrap_or_else(|| arg.clone());
 
     /* ============================= Uncook the terminal ============================= */
-    enable_raw_mode().expect("Could not cook the terminal");
-    execute!(io::stdout(), EnterAlternateScreen).expect("Could not enter alt mode");
-    execute!(io::stdout(), Hide).expect("Could not hide cursor");
-    execute!(io::stdout(), Clear(ClearType::All)).expect("Could not clear terminal");
-    execute!(io::stdout(), EnableMouseCapturePixels)
-        .expect("Could not enable mouse capture");
+    if let Err(e) = enable_raw_mode().and_then(|_| {
+        execute!(
+            io::stdout(),
+            EnterAlternateScreen,
+            Hide,
+            Clear(ClearType::All),
+            EnableMouseCapturePixels
+        )
+    }) {
+        fail(&format!("Could not set up the terminal: {}", e));
+    }
 
     /* ========================== Cook the terminal on panic ========================= */
     let default_panic = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        /* Atleast try to cook the terminal on error before printing the message.
-         * Do not handle the error to prevent possible infinite loops when panicking. */
-
-        let _ = execute!(io::stdout(), DisableMouseCapturePixels);
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
-        let _ = execute!(io::stdout(), Show);
-        let _ = disable_raw_mode();
+        restore_terminal();
         default_panic(info);
     }));
 
@@ -156,20 +161,23 @@ fn main() {
     RECEIVER_GR.get_or_init(|| Mutex::new(event_inputs.2));
 
     /* ========== Check if the terminal supports the Kitty graphics protocol ========= */
-    terminal_graphics_test_support()
-        .expect("Error when testing terminal support of the Kitty graphics protocol");
+    terminal_graphics_test_support().unwrap_or_else(|e| fail(&e));
 
     /* ================================= Load config ================================= */
     let mut key_matcher;
     {
-        let mut config = config_load_or_create().expect("Could not load config");
-        key_matcher = config.bindings.unwrap();
-        config.bindings = None;
+        let mut config = config_load_or_create()
+            .unwrap_or_else(|e| fail(&format!("Could not load the config: {}", e)));
+        let Some(bindings) = config.bindings.take() else {
+            fail("The config has no [bindings]");
+        };
+        key_matcher = bindings;
         CONFIG.get_or_init(|| config);
     }
 
     /* ======================= Calculate padding for all images ====================== */
-    let winsize_tmp = window_size().expect("Could not get win size");
+    let winsize_tmp = window_size()
+        .unwrap_or_else(|e| fail(&format!("Could not read the window size: {}", e)));
     let winsize = WindowSize {
         rows: winsize_tmp.rows,
         columns: winsize_tmp.columns,
@@ -201,20 +209,25 @@ fn main() {
     let (mut viewer, sender_rerender) = Viewer::new();
 
     let (mut renderer, result_receiver) = threads::renderer::Renderer::new();
-    renderer.run(&arg).expect("Couldn't start renderer thread");
     renderer
-        .send_and_confirm_action(RendererAction::Load)
-        .expect("Cannot send action to renderer thread");
+        .run(&arg)
+        .and_then(|_| renderer.send_and_confirm_action(RendererAction::Load))
+        .unwrap_or_else(|e| fail(&e));
 
     /* ========================= Thread notifying file change ======================== */
-    let file_reload = threads::fnotify::spawn(&arg).expect("Could not init file watcher");
+    let (mut file_reload, reload_error) = match threads::fnotify::spawn(&arg) {
+        Ok(receiver) => (receiver, None),
+        Err(e) => (never(), Some(format!("Live reload is off: {}", e))),
+    };
+    /* Closing the window or `kill` quits like `q`; without it they quit unsaved */
+    let stop = threads::signals::spawn().unwrap_or_else(|_| never());
 
     /* ============================== Main program loop ============================== */
     let mut app = App {
         mode: Mode::Normal,
         count: None,
         search: None,
-        message: None,
+        message: reload_error,
         link: None,
         help: ui::help_lines(&help_entries(&key_matcher)),
         toc: Toc::default(),
@@ -227,10 +240,8 @@ fn main() {
         ruler_image: None,
         pointer: PointerShape::Default,
         save_due: None,
-        throttle: LastExecuted {
-            alpha: SystemTime::now() - Duration::from_millis(500),
-            inverse: SystemTime::now() - Duration::from_millis(500),
-        },
+        throttle: LastExecuted::default(),
+        fatal: None,
     };
 
     let mut current_mouse = MouseEvent {
@@ -251,6 +262,8 @@ fn main() {
         sel.recv(&event_inputs.1);
         /* Window size change input */
         sel.recv(&event_inputs.3);
+        /* A signal to stop */
+        sel.recv(&stop);
 
         /* Keys go first: a busy renderer or a redraw loop must never make the viewer
          * ignore input, `q` above all */
@@ -259,16 +272,17 @@ fn main() {
         } else if let Some((_, due)) = &app.save_due {
             /* Wake up to write the position once the view has stayed put */
             sel.ready_timeout(due.saturating_duration_since(Instant::now()))
-                .unwrap_or(7)
+                .unwrap_or(SAVE_DUE)
         } else {
             sel.ready()
         };
 
         match index_ready {
             0 | 1 => {
-                let result = result_receiver
-                    .try_recv_priority(index_ready)
-                    .expect("Could not receive priority");
+                let Ok(result) = result_receiver.try_recv_priority(index_ready) else {
+                    app.fatal = Some("The renderer stopped".to_owned());
+                    break 'main;
+                };
 
                 match result {
                     RendererResult::PageMetadata {
@@ -317,11 +331,8 @@ fn main() {
                         if let Some(search) = app.search.as_mut() {
                             search.pending = true;
                             search.follow = false;
-                            renderer
-                                .send_and_confirm_action(RendererAction::Search(
-                                    search.needle.clone(),
-                                ))
-                                .expect("Could not send action to renderer");
+                            let action = RendererAction::Search(search.needle.clone());
+                            tell_renderer(&renderer, &mut app, action);
                         }
                     }
                     RendererResult::Image { page, data } => {
@@ -338,22 +349,30 @@ fn main() {
                     }
                 }
             }
-            2 => {
-                file_reload
-                    .try_recv()
-                    .expect("Could not receive file reload");
-                clear_channel!(file_reload);
-                renderer
-                    .send_and_confirm_action(RendererAction::Load)
-                    .expect("Cannot send action to renderer thread");
-            }
+            2 => match take(&file_reload) {
+                Gone => {
+                    /* The watcher stopped; keep going without live reload */
+                    file_reload = never();
+                    app.message = Some("Live reload stopped".to_owned());
+                }
+                Taken(()) => {
+                    clear_channel!(file_reload);
+                    tell_renderer(&renderer, &mut app, RendererAction::Load);
+                }
+                Nothing => continue 'main,
+            },
             3 => {
-                sender_rerender
-                    .try_recv()
-                    .expect("Could not receive rerender");
+                let _ = sender_rerender.try_recv();
             }
             4 => {
-                let input = event_inputs.0.try_recv().expect("Could not receive input");
+                let input = match take(&event_inputs.0) {
+                    Taken(input) => input,
+                    Nothing => continue 'main,
+                    Gone => {
+                        app.fatal = Some("Lost the terminal".to_owned());
+                        break 'main;
+                    }
+                };
                 match input {
                     InputEvent::Key(key) => {
                         if key.kind != KeyEventKind::Release
@@ -375,24 +394,24 @@ fn main() {
                     }
                 }
             }
-            5 => {
-                current_mouse =
-                    event_inputs.1.try_recv().expect("Could not receive mouse");
-            }
+            5 => match take(&event_inputs.1) {
+                Taken(mouse) => current_mouse = mouse,
+                Nothing => continue 'main,
+                Gone => {
+                    app.fatal = Some("Lost the terminal".to_owned());
+                    break 'main;
+                }
+            },
             6 => {
-                event_inputs
-                    .3
-                    .try_recv()
-                    .expect("Could not receive from win-size");
+                if let Gone = take(&event_inputs.3) {
+                    app.fatal = Some("Lost the terminal".to_owned());
+                    break 'main;
+                }
                 clear_channel!(event_inputs.3);
 
                 /* The resize event only carries cells; ask again for pixels as well */
                 if let Ok(size) = window_size() {
-                    *TERMINAL_SIZE
-                        .get()
-                        .unwrap()
-                        .write()
-                        .expect("Could not get win size handle") = size;
+                    *TERMINAL_SIZE.get().unwrap().write().unwrap() = size;
                 }
                 viewer.bound_viewer();
                 app.toc.scroll_by(0, toc_visible(&viewport()));
@@ -401,12 +420,16 @@ fn main() {
                     *scroll = (*scroll).min(max);
                 }
             }
-            7 => {
+            7 => break 'main,
+            SAVE_DUE => {
                 save_state(&mut app);
                 continue 'main;
             }
             _ => unreachable!(),
         };
+        if app.fatal.is_some() {
+            break 'main;
+        }
 
         schedule_save(&mut app, &viewer);
 
@@ -459,41 +482,13 @@ fn main() {
          * this frame's */
         while gr.try_recv().is_ok() {}
 
-        queue!(io::stdout(), BeginSynchronizedUpdate).expect("Could not begin frame");
-        /* Erase from the top-left corner down, never the whole display: in kitty,
-         * erasing the whole display (ED 2) also deletes images that have no placement
-         * yet, i.e. pages uploaded since the last frame, so they could never be shown */
-        queue!(
-            io::stdout(),
-            ClearImages,
-            MoveTo(0, 0),
-            Clear(ClearType::FromCursorDown)
-        )
-        .expect("Could not clear the screen");
-
-        let displayed = if let Mode::Help { scroll } = app.mode {
-            ui::draw_help(&app.help, scroll).expect("Could not draw help");
-            Vec::new()
-        } else {
-            viewer
-                .display_pages(&renderer)
-                .expect("Could not display pages")
+        let displayed = match draw_frame(&title, &mut viewer, &renderer, &mut app) {
+            Ok(displayed) => displayed,
+            Err(e) => {
+                app.fatal = Some(e);
+                break 'main;
+            }
         };
-
-        if !matches!(app.mode, Mode::Help { .. }) {
-            draw_ruler(&mut app, &viewer);
-        }
-
-        let (page, y) = viewer.reading_spot();
-        let section = current_section(&app.toc.entries, page, y);
-        if app.mode == Mode::Toc {
-            draw_toc(&app, &viewer, section);
-        }
-
-        ui::draw_frame(&title, &status_segments(&app, &viewer, section))
-            .expect("Could not draw frame");
-        queue!(io::stdout(), EndSynchronizedUpdate).expect("Could not end the frame");
-        io::stdout().flush().expect("Could not flush stdout");
 
         for page in displayed {
             /* Never wait on the terminal for good: a missing answer must not
@@ -523,12 +518,101 @@ fn main() {
     RUNNING.store(false, Ordering::Release);
 
     /* ========================== Cook the terminal on exit ========================== */
-    execute!(io::stdout(), DisableMouseCapturePixels)
-        .expect("Could not disable mouse capture");
-    execute!(io::stdout(), LeaveAlternateScreen).expect("Could not leave alt mode");
-    execute!(io::stdout(), Show).expect("Could not show cursor");
-    disable_raw_mode().expect("Could not uncook the terminal");
+    restore_terminal();
     drivers::graphics::terminal_graphics_remove_leftovers();
+    if let Some(e) = app.fatal {
+        eprintln!("viewmer: {}", e);
+        std::process::exit(1);
+    }
+}
+
+/* Gives the terminal back as it was. Errors are ignored: this also runs when the
+ * terminal is gone, and from the panic hook. */
+fn restore_terminal() {
+    let _ = execute!(
+        io::stdout(),
+        DisableMouseCapturePixels,
+        LeaveAlternateScreen,
+        Show
+    );
+    let _ = disable_raw_mode();
+}
+
+/* Gives the terminal back and exits with `message` */
+fn fail(message: &str) -> ! {
+    restore_terminal();
+    eprintln!("viewmer: {}", message);
+    std::process::exit(1);
+}
+
+/* What a channel the main loop woke up for holds */
+enum Take<T> {
+    Taken(T),
+    /* Another wakeup took it first */
+    Nothing,
+    /* The other side is gone */
+    Gone,
+}
+use Take::*;
+
+fn take<T>(channel: &Receiver<T>) -> Take<T> {
+    match channel.try_recv() {
+        Ok(x) => Taken(x),
+        Err(TryRecvError::Empty) => Nothing,
+        Err(TryRecvError::Disconnected) => Gone,
+    }
+}
+
+/* Sends `action` to the renderer; a renderer that stopped ends the viewer */
+fn tell_renderer(renderer: &Renderer, app: &mut App, action: RendererAction) {
+    if let Err(e) = renderer.send_and_confirm_action(action) {
+        app.fatal.get_or_insert(e);
+    }
+}
+
+fn write_error(e: io::Error) -> String {
+    format!("Could not write to the terminal: {}", e)
+}
+
+/* Draws one frame in a synchronized update and returns the pages placed in it */
+fn draw_frame(
+    title: &str,
+    viewer: &mut Viewer,
+    renderer: &Renderer,
+    app: &mut App,
+) -> Result<Vec<usize>, String> {
+    let mut out = io::stdout();
+    queue!(out, BeginSynchronizedUpdate).map_err(write_error)?;
+    /* Erase from the top-left corner down, never the whole display: in kitty,
+     * erasing the whole display (ED 2) also deletes images that have no placement
+     * yet, i.e. pages uploaded since the last frame, so they could never be shown */
+    queue!(
+        out,
+        ClearImages,
+        MoveTo(0, 0),
+        Clear(ClearType::FromCursorDown)
+    )
+    .map_err(write_error)?;
+
+    let displayed = if let Mode::Help { scroll } = app.mode {
+        ui::draw_help(&app.help, scroll).map_err(write_error)?;
+        Vec::new()
+    } else {
+        let displayed = viewer.display_pages(renderer)?;
+        draw_ruler(app, viewer);
+        displayed
+    };
+
+    let (page, y) = viewer.reading_spot();
+    let section = current_section(&app.toc.entries, page, y);
+    if app.mode == Mode::Toc {
+        draw_toc(app, viewer, section).map_err(write_error)?;
+    }
+
+    ui::draw_frame(title, &status_segments(app, viewer, section)).map_err(write_error)?;
+    queue!(out, EndSynchronizedUpdate).map_err(write_error)?;
+    out.flush().map_err(write_error)?;
+    Ok(displayed)
 }
 
 /* Opens the remembered state of `file` and goes back to it */
@@ -645,7 +729,7 @@ fn reveal_section(app: &mut App, viewer: &Viewer) {
     app.toc.reveal(section, toc_visible(&viewport()));
 }
 
-fn draw_toc(app: &App, viewer: &Viewer, section: Option<usize>) {
+fn draw_toc(app: &App, viewer: &Viewer, section: Option<usize>) -> io::Result<()> {
     let toc = &app.toc;
     let rows = toc.rows();
     let visible: Vec<TocRow> = rows
@@ -677,7 +761,7 @@ fn draw_toc(app: &App, viewer: &Viewer, section: Option<usize>) {
     } else {
         "⏎ go · ␣ peek · h/l fold · / find".to_owned()
     };
-    ui::draw_toc(&visible, &position, &footer).expect("Could not draw contents");
+    ui::draw_toc(&visible, &position, &footer)
 }
 
 /* Goes to the selected entry of the panel */
@@ -717,8 +801,8 @@ fn toc_click(mouse: MouseEvent, viewer: &mut Viewer, app: &mut App) {
 fn set_pointer(app: &mut App, shape: PointerShape) {
     if app.pointer != shape {
         app.pointer = shape;
-        execute!(io::stdout(), SetPointerShape(shape))
-            .expect("Could not set pointer shape");
+        /* Only looks; a failed write shows up when the frame is drawn */
+        let _ = execute!(io::stdout(), SetPointerShape(shape));
     }
 }
 
@@ -730,10 +814,11 @@ fn show_current_match(
     renderer: &Renderer,
     scroll: bool,
 ) {
+    let Some(current) = app.search.as_ref().map(|s| s.current) else {
+        return;
+    };
+    tell_renderer(renderer, app, RendererAction::SetCurrentMatch(current));
     let Some(search) = &app.search else { return };
-    renderer
-        .send_and_confirm_action(RendererAction::SetCurrentMatch(search.current))
-        .expect("Could not send action to renderer");
     if let Some(m) = search.current_match().filter(|_| scroll) {
         app.jumps.record(viewer.spot());
         viewer.jump_to(m.page, m.y, 0.25);
@@ -943,26 +1028,17 @@ fn handle_key(
         }
         ConfigAction::Quit => return true,
         ConfigAction::ToggleAlpha => {
-            if app.throttle.alpha.elapsed().unwrap() < Duration::from_millis(500) {
+            if !throttle(&mut app.throttle.alpha) {
                 return false;
             }
-
-            app.throttle.alpha = SystemTime::now();
-
-            renderer
-                .send_and_confirm_action(RendererAction::ToggleAlpha)
-                .expect("Could not send action to renderer");
+            tell_renderer(renderer, app, RendererAction::ToggleAlpha);
             viewer.invalidate_registry();
         }
         ConfigAction::ToggleInverse => {
-            if app.throttle.inverse.elapsed().unwrap() < Duration::from_millis(500) {
+            if !throttle(&mut app.throttle.inverse) {
                 return false;
             }
-
-            app.throttle.inverse = SystemTime::now();
-            renderer
-                .send_and_confirm_action(RendererAction::ToggleInverse)
-                .expect("Could not send action to renderer");
+            tell_renderer(renderer, app, RendererAction::ToggleInverse);
             viewer.invalidate_registry();
         }
         ConfigAction::HalfPageDown => viewer.scroll_screens(0.5 * times as f32),
@@ -1035,6 +1111,15 @@ fn handle_key(
     }
 
     false
+}
+
+/* Whether a slow toggle last ran long enough ago to run again; if so, marks it as run */
+fn throttle(last: &mut Option<Instant>) -> bool {
+    if last.is_some_and(|t| t.elapsed() < Duration::from_millis(500)) {
+        return false;
+    }
+    *last = Some(Instant::now());
+    true
 }
 
 /* The ruler's band in viewport pixels, when its page is on screen */
@@ -1158,9 +1243,7 @@ fn start_search(needle: String, renderer: &Renderer, app: &mut App) {
         return;
     }
     app.search = Some(SearchState::new(needle.clone()));
-    renderer
-        .send_and_confirm_action(RendererAction::Search(needle))
-        .expect("Could not send action to renderer");
+    tell_renderer(renderer, app, RendererAction::Search(needle));
 }
 
 fn run_command(
@@ -1199,9 +1282,7 @@ fn run_command(
         }
         Command::ClearSearch => {
             if app.search.take().is_some() {
-                renderer
-                    .send_and_confirm_action(RendererAction::ClearSearch)
-                    .expect("Could not send action to renderer");
+                tell_renderer(renderer, app, RendererAction::ClearSearch);
                 viewer.invalidate_registry();
             }
         }

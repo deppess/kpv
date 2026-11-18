@@ -432,10 +432,10 @@ impl Viewer {
     /* ============================= Calculation methods ============================= */
     fn offset2page(&self, offset: f32) -> usize {
         /* Update page index by performing binary search */
-        let res = self.cumulative_heights.binary_search_by(|x: &f32| {
-            x.partial_cmp(&offset)
-                .expect("NaN value found in cumulative height vector")
-        });
+        /* total_cmp: a page with broken bounds must not stop the viewer */
+        let res = self
+            .cumulative_heights
+            .binary_search_by(|x: &f32| x.total_cmp(&offset));
 
         match res {
             Ok(x) => x,
@@ -533,13 +533,13 @@ impl Viewer {
 
         /* Cumulative displayed page height */
         while displayed_offset < terminal_height && page_index < pages_num {
-            let height = ((self
-                .page_height(page_index)
-                .expect("Could not retrieve page height"))
-                - margin_bottom)
-                * self.scale;
-
-            let width = self.page_width(page_index).unwrap() * self.scale;
+            let (Ok(height), Ok(width)) =
+                (self.page_height(page_index), self.page_width(page_index))
+            else {
+                break;
+            };
+            let height = (height - margin_bottom) * self.scale;
+            let width = width * self.scale;
 
             bounds.push((
                 page_index,
@@ -565,35 +565,20 @@ impl Viewer {
             mouse.column as i32 - vp.x() as i32,
             mouse.row as i32 - vp.y() as i32,
         );
-        let mut intersected_page = None;
-        let mut intersected_rect = None;
-        for bound in self.calculate_display_bounds() {
-            let (page, rect) = bound;
-            if rect_point_intersect(&rect, &mouse) {
-                intersected_page = Some(page);
-                intersected_rect = Some(rect);
-                break;
-            }
-        }
-
-        intersected_page?;
+        let (page, rect) = self
+            .calculate_display_bounds()
+            .into_iter()
+            .find(|(_, rect)| rect_point_intersect(rect, &mouse))?;
 
         let page_point = (
-            ((mouse.0 - intersected_rect.unwrap().x) as f32 / self.scale) as i32,
-            ((mouse.1 - intersected_rect.unwrap().y) as f32 / self.scale) as i32,
+            ((mouse.0 - rect.x) as f32 / self.scale) as i32,
+            ((mouse.1 - rect.y) as f32 / self.scale) as i32,
         );
-        let mut intersected_link = None;
-        let links = &self.links[intersected_page.unwrap()];
-        for link in links.iter() {
-            if rect_point_intersect(&link.bounds, &page_point) {
-                intersected_link = Some(link);
-                break;
-            }
-        }
-
-        intersected_link?;
-
-        Some(intersected_link.unwrap().clone())
+        self.links
+            .get(page)?
+            .iter()
+            .find(|link| rect_point_intersect(&link.bounds, &page_point))
+            .cloned()
     }
 
     /* What a hovered link points to, for the status bar */
@@ -609,41 +594,39 @@ impl Viewer {
         }
     }
 
+    /* Stores a rendered page, or with `None` forgets it. The oldest pages are dropped
+     * while the images take more memory than allowed. */
     pub fn handle_image(&mut self, page: usize, image: Option<Arc<RwLock<Image>>>) {
-        macro_rules! remove_image {
-            ($page:expr) => {
-                self.memory_used -= self.images[&$page].read().unwrap().size();
-                self.images.remove(&$page);
-                self.invalidated.remove(&$page);
-            };
-        }
-
         let config = CONFIG.get().unwrap();
 
-        if image.is_none() {
-            remove_image!(page);
-            return;
-        }
+        self.remove_image(page);
+        let Some(image) = image else { return };
 
-        if self.invalidated.contains_key(&page) {
-            remove_image!(page);
-        }
-
-        let image_unwrapped = image.unwrap();
-        self.memory_used += image_unwrapped.read().unwrap().size();
+        self.memory_used += image.read().unwrap().size();
         self.last_rendered.push_back(page);
 
-        self.images.insert(page, image_unwrapped);
+        self.images.insert(page, image);
         self.failures.remove(&page);
         self.scheduled4render.remove(&page);
 
         while self.memory_used >= config.viewer.memory_limit {
-            let page2remove = self.last_rendered.pop_front().unwrap();
-            if !self.images.contains_key(&page2remove) {
-                continue;
+            let Some(oldest) = self.last_rendered.pop_front() else {
+                break;
+            };
+            /* A page rendered again is in the queue more than once; keep it while a
+             * newer entry still stands for it */
+            if oldest != page && !self.last_rendered.contains(&oldest) {
+                self.remove_image(oldest);
             }
-            remove_image!(page2remove);
         }
+    }
+
+    fn remove_image(&mut self, page: usize) {
+        if let Some(old) = self.images.remove(&page) {
+            self.memory_used =
+                self.memory_used.saturating_sub(old.read().unwrap().size());
+        }
+        self.invalidated.remove(&page);
     }
 
     fn load_or_display(
@@ -652,7 +635,7 @@ impl Viewer {
         rect: DisplayRect,
         preload: bool,
         renderer: &Renderer,
-    ) -> Option<usize> {
+    ) -> Result<Option<usize>, String> {
         if (!self.images.contains_key(&page) || self.invalidated.contains_key(&page))
             && !self.scheduled4render.contains_key(&page)
         {
@@ -661,24 +644,18 @@ impl Viewer {
                 self.scheduled4render.insert(page, ());
             }
 
-            return None;
+            return Ok(None);
         }
 
-        if self.images.contains_key(&page) {
-            let image = self.images[&page].read().unwrap();
-            if preload {
-                image.check().unwrap();
-                return Some(page);
-            } else {
-                let has_displayed = image.display(rect).unwrap();
-
-                if has_displayed {
-                    return Some(page);
-                }
-            }
+        let Some(image) = self.images.get(&page) else {
+            return Ok(None);
+        };
+        let image = image.read().unwrap();
+        if preload {
+            image.check()?;
+            return Ok(Some(page));
         }
-
-        None
+        Ok(image.display(rect)?.then_some(page))
     }
 
     /* Displays the pages based on the internal state of the offset.
@@ -705,14 +682,15 @@ impl Viewer {
 
         /* Preload N pages before the first displayed page to avoid flickering pages */
         for i in 0..usize::min(preloaded, page_index) {
-            let r = self.load_or_display(page_index - 1 - i, none_rect, true, renderer);
+            let r =
+                self.load_or_display(page_index - 1 - i, none_rect, true, renderer)?;
             if let Some(page) = r {
                 displayed.push(page);
             }
         }
 
         for (page, rect) in self.calculate_display_bounds() {
-            let r = self.load_or_display(page, rect, false, renderer);
+            let r = self.load_or_display(page, rect, false, renderer)?;
             if let Some(page) = r {
                 displayed.push(page);
             }
@@ -721,7 +699,7 @@ impl Viewer {
 
         /* Preload N pages after the last displayed page */
         for _ in 0..usize::min(preloaded, self.cumulative_heights.len() - page_index) {
-            let r = self.load_or_display(page_index, none_rect, true, renderer);
+            let r = self.load_or_display(page_index, none_rect, true, renderer)?;
             if let Some(page) = r {
                 displayed.push(page);
             }
