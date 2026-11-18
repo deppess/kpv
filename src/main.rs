@@ -13,6 +13,7 @@ mod state;
 mod store;
 #[cfg(test)]
 mod testutil;
+mod theme;
 mod threads;
 mod ui;
 mod viewer;
@@ -47,6 +48,7 @@ use crate::jumps::Jumps;
 use crate::outline::Toc;
 use crate::ruler::Lines;
 use crate::state::*;
+use crate::theme::{set_theme, Theme};
 use crate::threads::event::InputEvent;
 use crate::threads::renderer::RendererAction;
 use crate::ui::{help_max_scroll, help_visible, toc_visible, viewport};
@@ -116,6 +118,16 @@ fn main() {
         key_matcher = bindings;
         CONFIG.get_or_init(|| config);
     }
+    /* A broken theme falls back to the default colors and says so */
+    let theme_problems = match config_folder() {
+        Ok(folder) => {
+            let (theme, problems) = Theme::load(&folder.join("theme.toml"));
+            set_theme(theme);
+            send_tints();
+            problems
+        }
+        Err(e) => vec![e],
+    };
 
     /* ======================= Calculate padding for all images ====================== */
     let winsize_tmp = window_size()
@@ -169,7 +181,13 @@ fn main() {
         mode: Mode::Normal,
         count: None,
         search: None,
-        message: reload_error,
+        message: reload_error.or_else(|| match theme_problems.as_slice() {
+            [] => None,
+            [one] => Some(format!("theme.toml: {}", one)),
+            [first, rest @ ..] => {
+                Some(format!("theme.toml: {} (and {} more)", first, rest.len()))
+            }
+        }),
         link: None,
         help: ui::help_lines(&help_entries(&key_matcher)),
         toc: Toc::default(),

@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     mem::discriminant,
+    path::PathBuf,
 };
 
 use toml::{Table, Value};
@@ -273,13 +274,18 @@ fn fix_config_toml(
     Ok(config_has_changed)
 }
 
-pub fn config_load_or_create() -> Result<Config, String> {
-    let mut config =
+/* The folder with config.toml and theme.toml, made if it isn't there */
+pub fn config_folder() -> Result<PathBuf, String> {
+    let mut folder =
         config_dir().ok_or("Incompatible OS: No config directory has been found")?;
-    config.push(CONFIG_FILENAME);
-    std::fs::create_dir_all(config.as_path())
+    folder.push(CONFIG_FILENAME);
+    std::fs::create_dir_all(folder.as_path())
         .map_err(|x| format!("Could not create config directory: {}", x))?;
-    config.push("config.toml");
+    Ok(folder)
+}
+
+pub fn config_load_or_create() -> Result<Config, String> {
+    let config = config_folder()?.join("config.toml");
 
     let mut config_content = String::new();
     if !config.as_path().exists() {

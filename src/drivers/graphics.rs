@@ -115,13 +115,61 @@ pub fn terminal_graphics_display_image(
 }
 
 /* Images at a z-index below -1,073,741,824 are drawn behind cells with a colored
- * background, which lets the contents panel cover them. Pages sit one below the
- * ruler, so the ruler is drawn over them. */
-const PAGE_Z: i64 = -1_073_741_826;
-const RULER_Z: i64 = -1_073_741_825;
+ * background, which lets an opaque panel cover them, and every negative z-index is
+ * behind text. From the bottom up: pages, the ruler over them, the tint of a
+ * see-through panel, and the tint of the selected entry in it. */
+const PAGE_Z: i64 = -1_073_741_830;
+const RULER_Z: i64 = -1_073_741_829;
+pub const PANEL_Z: i64 = -1_073_741_828;
+pub const SELECTED_Z: i64 = -1_073_741_827;
 
 /* The ruler's image ID; page images count up from 1 and never get this far */
 pub const RULER_ID: usize = 0x7FFF_0001;
+/* Images of one pixel each, stretched under see-through panels */
+pub const CONTENTS_TINT_ID: usize = 0x7FFF_0002;
+pub const SELECTED_TINT_ID: usize = 0x7FFF_0003;
+pub const HELP_TINT_ID: usize = 0x7FFF_0004;
+
+/* Sends a one-pixel image, straight in the command since it's tiny. Quiet. */
+pub fn terminal_graphics_send_pixel(id: usize, rgba: [u8; 4]) -> Result<(), String> {
+    let mut handle = stdout().lock();
+    write!(
+        handle,
+        "\x1B_Gq=2,a=t,f=32,s=1,v=1,t=d,i={};{}\x1B\\",
+        id,
+        STANDARD.encode(rgba)
+    )
+    .and_then(|_| handle.flush())
+    .map_err(io_error)
+}
+
+/* Stretches image `id` over `cols` x `rows` cells from a 1-indexed cell at height
+ * `z`, moving it if it's shown already. Quiet. */
+pub fn terminal_graphics_place_tint(
+    id: usize,
+    z: i64,
+    col: usize,
+    row: usize,
+    cols: usize,
+    rows: usize,
+) -> Result<(), String> {
+    let mut handle = stdout().lock();
+    write!(
+        handle,
+        "\x1B[s\x1B[{};{}H\x1B_Gq=2,z={},a=p,C=1,i={},p=1,c={},r={};\x1B\\\x1B[u",
+        row, col, z, id, cols, rows
+    )
+    .and_then(|_| handle.flush())
+    .map_err(io_error)
+}
+
+/* Takes image `id` off the screen and keeps it */
+pub fn terminal_graphics_hide(id: usize) -> Result<(), String> {
+    let mut handle = stdout().lock();
+    write!(handle, "\x1B_Gq=2,a=d,d=i,i={};\x1B\\", id)
+        .and_then(|_| handle.flush())
+        .map_err(io_error)
+}
 
 /* Shows the ruler image over `cols` x `rows` cells from a 1-indexed cell, moving it
  * if it's shown already (it has the one placement, 1). Quiet, so no answer gets mixed
@@ -140,14 +188,6 @@ pub fn terminal_graphics_place_ruler(
     )
     .and_then(|_| handle.flush())
     .map_err(io_error)
-}
-
-/* Takes the ruler off the screen and keeps its image */
-pub fn terminal_graphics_hide_ruler() -> Result<(), String> {
-    let mut handle = stdout().lock();
-    write!(handle, "\x1B_Gq=2,a=d,d=i,i={};\x1B\\", RULER_ID)
-        .and_then(|_| handle.flush())
-        .map_err(io_error)
 }
 
 fn io_error(x: std::io::Error) -> String {

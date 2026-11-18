@@ -15,6 +15,7 @@ use crate::ruler::{Lines, Ruler};
 use crate::state::*;
 use crate::store::{FileState, Store};
 use crate::threads::renderer::{Renderer, RendererAction, RendererResult};
+use crate::ui;
 use crate::viewer::*;
 
 /* How long the view must stay put before its position is written */
@@ -36,7 +37,7 @@ pub struct App {
     pub message: Option<String>,
     /* Where the hovered link points */
     pub link: Option<String>,
-    pub help: Vec<String>,
+    pub help: Vec<ui::HelpLine>,
     /* The contents panel, kept between openings */
     pub toc: Toc,
     /* Where this file's state is remembered; `None` when that's turned off */
@@ -68,6 +69,19 @@ pub struct App {
 pub struct Shown {
     pub pages: Vec<PagePlacement>,
     pub ruler: Option<RulerPlacement>,
+    pub tints: Vec<Tint>,
+}
+
+/* A one-pixel image `id` stretched over cells under a see-through panel: from a
+ * 1-indexed cell, `cols` x `rows` cells, at height `z` */
+#[derive(Clone, Debug, PartialEq)]
+pub struct Tint {
+    pub id: usize,
+    pub z: i64,
+    pub col: usize,
+    pub row: usize,
+    pub cols: usize,
+    pub rows: usize,
 }
 
 impl Shown {
@@ -86,11 +100,14 @@ pub struct Changes {
     pub pages: Vec<PagePlacement>,
     /* Place or hide the ruler */
     pub ruler: bool,
+    /* The tints to place, and the ones to take down */
+    pub tints: Vec<Tint>,
+    pub hide: Vec<usize>,
 }
 
 /* Everything is placed again when what's in view changes. A page kept ready that
  * arrives on its own changes nothing in view and is placed by itself, and the ruler
- * moves by itself. */
+ * and the tints move by themselves. */
 pub fn changes(old: Option<&Shown>, new: &Shown) -> Changes {
     match old {
         Some(old) if old.in_view() == new.in_view() => Changes {
@@ -102,11 +119,25 @@ pub fn changes(old: Option<&Shown>, new: &Shown) -> Changes {
                 .cloned()
                 .collect(),
             ruler: old.ruler != new.ruler,
+            tints: new
+                .tints
+                .iter()
+                .filter(|t| !old.tints.contains(t))
+                .cloned()
+                .collect(),
+            hide: old
+                .tints
+                .iter()
+                .map(|t| t.id)
+                .filter(|id| !new.tints.iter().any(|t| t.id == *id))
+                .collect(),
         },
         _ => Changes {
             clear: true,
             pages: new.pages.clone(),
             ruler: true,
+            tints: new.tints.clone(),
+            hide: Vec::new(),
         },
     }
 }
@@ -314,7 +345,22 @@ mod tests {
     }
 
     fn shown(pages: Vec<PagePlacement>, ruler: Option<RulerPlacement>) -> Shown {
-        Shown { pages, ruler }
+        Shown {
+            pages,
+            ruler,
+            tints: Vec::new(),
+        }
+    }
+
+    fn tint(id: usize, row: usize) -> Tint {
+        Tint {
+            id,
+            z: -1,
+            col: 2,
+            row,
+            cols: 30,
+            rows: 1,
+        }
     }
 
     #[test]
@@ -334,7 +380,9 @@ mod tests {
             Changes {
                 clear: false,
                 pages: vec![],
-                ruler: false
+                ruler: false,
+                tints: vec![],
+                hide: vec![],
             }
         );
     }
@@ -368,5 +416,22 @@ mod tests {
         let c = changes(Some(&old), &rendered);
         assert!(c.clear);
         assert_eq!(c.pages.len(), 2);
+    }
+
+    #[test]
+    fn tints_move_appear_and_go_by_themselves() {
+        let pages = vec![page(0, 1, Some(2))];
+        let mut old = shown(pages.clone(), None);
+        old.tints = vec![tint(10, 2), tint(11, 4)];
+        let mut new = shown(pages.clone(), None);
+        new.tints = vec![tint(10, 2), tint(11, 5)];
+        let c = changes(Some(&old), &new);
+        assert!(!c.clear && c.pages.is_empty());
+        assert_eq!(c.tints, vec![tint(11, 5)]);
+        assert!(c.hide.is_empty());
+
+        let closed = changes(Some(&old), &shown(pages, None));
+        assert!(!closed.clear && closed.tints.is_empty());
+        assert_eq!(closed.hide, vec![10, 11]);
     }
 }

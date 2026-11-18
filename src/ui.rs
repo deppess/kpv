@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::io;
 
 use crossterm::{
     cursor::MoveTo,
@@ -10,6 +10,7 @@ use crossterm::{
 };
 
 use crate::globals::TERMINAL_SIZE;
+use crate::theme::{paint, Slot};
 
 /* The area inside the border where pages are drawn. Positions are 0-indexed cells,
  * sizes in cells and in pixels. */
@@ -60,35 +61,35 @@ pub fn viewport() -> Viewport {
     Viewport::from_size(size.columns, size.rows, size.width, size.height)
 }
 
-const ACCENT: Color = Color::Cyan;
-const DIM: Color = Color::DarkGrey;
-const MATCH: Color = Color::Yellow;
-/* Pages sit below every cell that has a background color, so the panel covers them */
-const PANEL_BG: Color = Color::Black;
-const PANEL_FG: Color = Color::White;
-const PANEL_SELECTED: Color = Color::DarkGrey;
+fn color(slot: Slot) -> Color {
+    paint(slot).color()
+}
+
+/* A panel background as a cell color. Pages sit below every cell that has a
+ * background color, so an opaque panel covers them; a see-through one leaves its
+ * cells clear and is tinted by an image laid under them instead. */
+pub fn background(slot: Slot) -> Color {
+    let p = paint(slot);
+    if p.see_through() {
+        Color::Reset
+    } else {
+        p.color()
+    }
+}
 
 /* One piece of the bottom border, drawn between `│` separators */
 pub struct Segment {
     pub text: String,
-    pub color: Option<Color>,
+    pub color: Slot,
 }
 
 impl Segment {
-    pub fn new(text: impl Into<String>, color: Option<Color>) -> Self {
+    pub fn new(text: impl Into<String>, color: Slot) -> Self {
         Self {
             text: text.into(),
             color,
         }
     }
-}
-
-pub fn mode_segment(mode: &str) -> Segment {
-    Segment::new(mode, Some(ACCENT))
-}
-
-pub fn match_segment(text: String) -> Segment {
-    Segment::new(text, Some(MATCH))
 }
 
 /* Cuts `text` to at most `width` characters, marking the cut with `…` */
@@ -123,13 +124,13 @@ pub fn draw_frame(title: &str, segments: &[Segment]) -> io::Result<()> {
     queue!(
         out,
         MoveTo(0, 0),
-        SetForegroundColor(DIM),
+        SetForegroundColor(color(Slot::FrameBorder)),
         Print("╭"),
-        ResetColor,
+        SetForegroundColor(color(Slot::FrameTitle)),
         SetAttribute(Attribute::Bold),
         Print(format!(" {} ", title)),
         SetAttribute(Attribute::Reset),
-        SetForegroundColor(DIM),
+        SetForegroundColor(color(Slot::FrameBorder)),
         Print("─".repeat(inner.saturating_sub(title_len))),
         Print("╮"),
     )?;
@@ -146,7 +147,7 @@ pub fn draw_frame(title: &str, segments: &[Segment]) -> io::Result<()> {
     }
 
     /* Bottom edge with the status segments */
-    queue!(out, MoveTo(0, rows as u16 - 1), Print("╰ "), ResetColor)?;
+    queue!(out, MoveTo(0, rows as u16 - 1), Print("╰ "))?;
     let mut used = 1;
     for (i, segment) in segments.iter().enumerate() {
         let sep = if i == 0 { "" } else { " │ " };
@@ -156,17 +157,17 @@ pub fn draw_frame(title: &str, segments: &[Segment]) -> io::Result<()> {
         }
         let text = truncate(&segment.text, room);
         used += sep.chars().count() + text.chars().count();
-        queue!(out, SetForegroundColor(DIM), Print(sep), ResetColor)?;
-        match segment.color {
-            Some(color) => {
-                queue!(out, SetForegroundColor(color), Print(&text), ResetColor)?
-            }
-            None => queue!(out, Print(&text))?,
-        }
+        queue!(
+            out,
+            SetForegroundColor(color(Slot::StatusSeparator)),
+            Print(sep),
+            SetForegroundColor(color(segment.color)),
+            Print(&text),
+        )?;
     }
     queue!(
         out,
-        SetForegroundColor(DIM),
+        SetForegroundColor(color(Slot::FrameBorder)),
         Print(" "),
         Print("─".repeat(inner.saturating_sub(used + 1))),
         Print("╯"),
@@ -176,8 +177,14 @@ pub fn draw_frame(title: &str, segments: &[Segment]) -> io::Result<()> {
     Ok(())
 }
 
-/* Lines of the help overlay: `keys  description`, keys padded to one column */
-pub fn help_lines(entries: &[(String, String)]) -> Vec<String> {
+/* One line of the help overlay: the keys, padded to one column, and what they do */
+#[derive(Debug, PartialEq)]
+pub struct HelpLine {
+    pub keys: String,
+    pub what: String,
+}
+
+pub fn help_lines(entries: &[(String, String)]) -> Vec<HelpLine> {
     let width = entries
         .iter()
         .map(|(k, _)| k.chars().count())
@@ -185,11 +192,26 @@ pub fn help_lines(entries: &[(String, String)]) -> Vec<String> {
         .unwrap_or(0);
     entries
         .iter()
-        .map(|(keys, what)| {
-            let pad = width - keys.chars().count();
-            format!("{}{}   {}", keys, " ".repeat(pad), what)
+        .map(|(keys, what)| HelpLine {
+            keys: format!("{:<width$}   ", keys),
+            what: what.clone(),
         })
         .collect()
+}
+
+/* Where the help box goes in the viewport for `lines`: left, top, width and height in
+ * cells */
+pub fn help_rect(vp: &Viewport, lines: &[HelpLine]) -> (u16, u16, u16, u16) {
+    let longest = lines
+        .iter()
+        .map(|l| l.keys.chars().count() + l.what.chars().count())
+        .max()
+        .unwrap_or(0);
+    let width = (longest + 4).clamp(24, (vp.cols as usize).saturating_sub(2).max(24));
+    let height = help_visible(vp).min(lines.len().max(1)) + 2;
+    let left = vp.col + (vp.cols.saturating_sub(width as u16)) / 2;
+    let top = vp.row + (vp.rows.saturating_sub(height as u16)) / 2;
+    (left, top, width as u16, height as u16)
 }
 
 /* Largest valid scroll offset for `lines` lines in a box showing `visible` lines */
@@ -203,15 +225,13 @@ pub fn help_visible(vp: &Viewport) -> usize {
 }
 
 /* Draws the help box centered in the viewport, starting at line `scroll` */
-pub fn draw_help(lines: &[String], scroll: usize) -> io::Result<()> {
+pub fn draw_help(lines: &[HelpLine], scroll: usize) -> io::Result<()> {
     let vp = viewport();
-    let longest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
-    let width = (longest + 4).clamp(24, (vp.cols as usize).saturating_sub(2).max(24));
-    let visible = help_visible(&vp).min(lines.len().max(1));
-    let height = visible + 2;
-    let left = vp.col + (vp.cols.saturating_sub(width as u16)) / 2;
-    let top = vp.row + (vp.rows.saturating_sub(height as u16)) / 2;
+    let (left, top, width, height) = help_rect(&vp, lines);
+    let (width, height) = (width as usize, height as usize);
+    let visible = height - 2;
     let inner = width - 2;
+    let border = color(Slot::HelpBorder);
     let mut out = io::stdout();
 
     let title = " Keys ";
@@ -223,7 +243,8 @@ pub fn draw_help(lines: &[String], scroll: usize) -> io::Result<()> {
     queue!(
         out,
         MoveTo(left, top),
-        SetForegroundColor(ACCENT),
+        SetBackgroundColor(background(Slot::HelpBackground)),
+        SetForegroundColor(border),
         Print("╭"),
         Print(title),
         Print("─".repeat(inner.saturating_sub(title.len() + pos.len()))),
@@ -231,18 +252,27 @@ pub fn draw_help(lines: &[String], scroll: usize) -> io::Result<()> {
         Print("╮"),
     )?;
     for i in 0..visible {
-        let text = lines.get(scroll + i).map(String::as_str).unwrap_or("");
-        let text = truncate(text, inner.saturating_sub(2));
+        let (keys, what) = lines
+            .get(scroll + i)
+            .map(|l| (l.keys.as_str(), l.what.as_str()))
+            .unwrap_or(("", ""));
+        let text = truncate(&format!("{}{}", keys, what), inner.saturating_sub(2));
         let pad = inner.saturating_sub(2 + text.chars().count());
+        let split = text
+            .char_indices()
+            .nth(keys.chars().count())
+            .map_or(text.len(), |(i, _)| i);
         queue!(
             out,
             MoveTo(left, top + 1 + i as u16),
-            SetForegroundColor(ACCENT),
+            SetForegroundColor(border),
             Print("│ "),
-            ResetColor,
-            Print(&text),
+            SetForegroundColor(color(Slot::HelpKeys)),
+            Print(&text[..split]),
+            SetForegroundColor(color(Slot::HelpText)),
+            Print(&text[split..]),
             Print(" ".repeat(pad)),
-            SetForegroundColor(ACCENT),
+            SetForegroundColor(border),
             Print(" │"),
         )?;
     }
@@ -252,13 +282,12 @@ pub fn draw_help(lines: &[String], scroll: usize) -> io::Result<()> {
         MoveTo(left, top + height as u16 - 1),
         Print("╰"),
         Print("─".repeat(inner.saturating_sub(hint.chars().count()))),
-        SetForegroundColor(DIM),
+        SetForegroundColor(color(Slot::HelpMuted)),
         Print(hint),
-        SetForegroundColor(ACCENT),
+        SetForegroundColor(border),
         Print("╯"),
         ResetColor,
-    )?;
-    out.flush()
+    )
 }
 
 /* Columns the contents panel takes on the left of the viewport */
@@ -324,19 +353,25 @@ pub fn draw_toc(rows: &[TocRow], position: &str, footer: &str) -> io::Result<()>
 
     let title = " Contents ";
     let position = format!(" {} ", position);
+    let (bg, border) = (
+        background(Slot::ContentsBackground),
+        color(Slot::ContentsBorder),
+    );
     queue!(
         out,
         MoveTo(left, top),
-        SetBackgroundColor(PANEL_BG),
-        SetForegroundColor(ACCENT),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
         Print("╭"),
+        SetForegroundColor(color(Slot::ContentsTitle)),
         SetAttribute(Attribute::Bold),
         Print(title),
         SetAttribute(Attribute::NormalIntensity),
+        SetForegroundColor(border),
         Print("─".repeat(inner.saturating_sub(title.len() + position.chars().count()))),
-        SetForegroundColor(DIM),
+        SetForegroundColor(color(Slot::ContentsMuted)),
         Print(&position),
-        SetForegroundColor(ACCENT),
+        SetForegroundColor(border),
         Print("╮"),
     )?;
 
@@ -345,8 +380,8 @@ pub fn draw_toc(rows: &[TocRow], position: &str, footer: &str) -> io::Result<()>
         queue!(
             out,
             MoveTo(left, y),
-            SetBackgroundColor(PANEL_BG),
-            SetForegroundColor(ACCENT),
+            SetBackgroundColor(bg),
+            SetForegroundColor(border),
             Print("│"),
         )?;
         match rows.get(i) {
@@ -355,9 +390,9 @@ pub fn draw_toc(rows: &[TocRow], position: &str, footer: &str) -> io::Result<()>
         }
         queue!(
             out,
-            SetBackgroundColor(PANEL_BG),
-            SetForegroundColor(ACCENT),
-            Print("│"),
+            SetBackgroundColor(bg),
+            SetForegroundColor(border),
+            Print("│")
         )?;
     }
 
@@ -365,12 +400,12 @@ pub fn draw_toc(rows: &[TocRow], position: &str, footer: &str) -> io::Result<()>
     queue!(
         out,
         MoveTo(left, top + vp.rows - 1),
-        SetBackgroundColor(PANEL_BG),
-        SetForegroundColor(ACCENT),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
         Print("╰"),
-        SetForegroundColor(DIM),
+        SetForegroundColor(color(Slot::ContentsMuted)),
         Print(format!(" {} ", footer)),
-        SetForegroundColor(ACCENT),
+        SetForegroundColor(border),
         Print("─".repeat(inner.saturating_sub(footer.chars().count() + 2))),
         Print("╯"),
         ResetColor,
@@ -380,10 +415,11 @@ pub fn draw_toc(rows: &[TocRow], position: &str, footer: &str) -> io::Result<()>
 /* ` ▾ 2.1  Setup            16 `, filling `inner` columns */
 fn draw_toc_row(out: &mut io::Stdout, row: &TocRow, inner: usize) -> io::Result<()> {
     let bg = if row.selected {
-        PANEL_SELECTED
+        background(Slot::ContentsSelected)
     } else {
-        PANEL_BG
+        background(Slot::ContentsBackground)
     };
+    let (muted, current) = (color(Slot::ContentsMuted), color(Slot::ContentsCurrent));
     let indent = 1 + 2 * row.depth.min(inner / 4);
     let label = truncate(&row.label, inner / 3);
     let label_len = label.chars().count();
@@ -391,12 +427,16 @@ fn draw_toc_row(out: &mut io::Stdout, row: &TocRow, inner: usize) -> io::Result<
     let room = inner.saturating_sub(indent + 2 + 1 + label_len + 1);
     let title = truncate(&row.title, room);
     let pad = room - title.chars().count();
-    let text = if row.current { ACCENT } else { PANEL_FG };
+    let text = if row.current {
+        current
+    } else {
+        color(Slot::ContentsText)
+    };
 
     queue!(out, SetBackgroundColor(bg), Print(" ".repeat(indent)))?;
     queue!(
         out,
-        SetForegroundColor(if row.current { ACCENT } else { DIM }),
+        SetForegroundColor(if row.current { current } else { muted }),
         Print(if row.current && row.marker == ' ' {
             '•'
         } else {
@@ -413,7 +453,11 @@ fn draw_toc_row(out: &mut io::Stdout, row: &TocRow, inner: usize) -> io::Result<
         Print(&title),
         SetAttribute(Attribute::NormalIntensity),
         Print(" ".repeat(pad + 1)),
-        SetForegroundColor(if row.selected { PANEL_FG } else { DIM }),
+        SetForegroundColor(if row.selected {
+            color(Slot::ContentsSelectedText)
+        } else {
+            muted
+        }),
         Print(&label),
         Print(' '),
     )
@@ -453,7 +497,11 @@ mod tests {
             ("j, Down".to_owned(), "Move down".to_owned()),
             ("?".to_owned(), "Show keys".to_owned()),
         ]);
-        assert_eq!(lines, vec!["j, Down   Move down", "?         Show keys"]);
+        let shown: Vec<String> = lines
+            .iter()
+            .map(|l| format!("{}{}", l.keys, l.what))
+            .collect();
+        assert_eq!(shown, vec!["j, Down   Move down", "?         Show keys"]);
     }
 
     #[test]

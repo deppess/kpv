@@ -15,6 +15,7 @@ use crate::{
     labels,
     outline::{self, OutlineEntry},
     store,
+    theme::{paint, Slot},
 };
 
 #[derive(Clone, PartialEq)]
@@ -202,9 +203,12 @@ impl RendererInnerState<'_> {
 
     /* Paints the search hits of `page` onto its bitmap */
     fn highlight(&self, page: usize, pixmap: &mut mupdf::Pixmap) {
-        const HIT: [u8; 3] = [255, 214, 0];
-        const CURRENT: [u8; 3] = [255, 120, 0];
-        const ALPHA: u32 = 110; /* out of 255 */
+        /* Without its own opacity a color is mixed in at this much, out of 255 */
+        const STRENGTH: u8 = 110;
+        let (hit, current) = (
+            page_color(Slot::PagesMatch, [255, 214, 0], STRENGTH),
+            page_color(Slot::PagesCurrentMatch, [255, 120, 0], STRENGTH),
+        );
 
         let scale = self.config.viewer.render_precision as f32;
         let (origin_x, origin_y) = (pixmap.x(), pixmap.y());
@@ -213,11 +217,12 @@ impl RendererInnerState<'_> {
         let stride = width as usize * n;
 
         for (i, (_, rect)) in self.hits.iter().enumerate().filter(|(_, h)| h.0 == page) {
-            let color = if self.current_hit == Some(i) {
-                CURRENT
+            let ([r, g, b], alpha) = if self.current_hit == Some(i) {
+                current
             } else {
-                HIT
+                hit
             };
+            let (color, alpha) = ([r, g, b], alpha as u32);
             let x0 = ((rect.x0 * scale) as i32 - origin_x).clamp(0, width);
             let x1 = ((rect.x1 * scale).ceil() as i32 - origin_x).clamp(0, width);
             let y0 = ((rect.y0 * scale) as i32 - origin_y).clamp(0, height);
@@ -228,17 +233,24 @@ impl RendererInnerState<'_> {
                     let at = y as usize * stride + x as usize * n;
                     for c in 0..3 {
                         let base = samples[at + c] as u32;
-                        samples[at + c] = ((base * (255 - ALPHA)
-                            + color[c] as u32 * ALPHA)
+                        samples[at + c] = ((base * (255 - alpha)
+                            + color[c] as u32 * alpha)
                             / 255) as u8;
                     }
                     if n == 4 {
-                        samples[at + 3] = samples[at + 3].max(ALPHA as u8);
+                        samples[at + 3] = samples[at + 3].max(alpha as u8);
                     }
                 }
             }
         }
     }
+}
+
+/* A color painted onto pages and how strongly, from the theme; `fallback` when the
+ * theme says the terminal's own color, which has no value to paint with */
+pub fn page_color(slot: Slot, fallback: [u8; 3], strength: u8) -> ([u8; 3], u8) {
+    let p = paint(slot);
+    (p.rgb().unwrap_or(fallback), p.alpha().unwrap_or(strength))
 }
 
 fn quad_bounds(quad: &Quad) -> mupdf::Rect {

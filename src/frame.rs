@@ -14,11 +14,12 @@ use crate::app::*;
 use crate::config::*;
 use crate::drivers;
 use crate::drivers::commands::{ClearImages, PointerShape, SetPointerShape};
-use crate::drivers::graphics::GraphicsResponse;
+use crate::drivers::graphics::{self, GraphicsResponse};
 use crate::image::*;
 use crate::outline::{breadcrumb, current_section};
 use crate::state::*;
-use crate::threads::renderer::Renderer;
+use crate::theme::{paint, Slot};
+use crate::threads::renderer::{page_color, Renderer};
 use crate::ui::{self, toc_visible, viewport, Segment, TocRow};
 use crate::viewer::*;
 
@@ -39,20 +40,17 @@ pub fn draw_frame(
     renderer: &Renderer,
     app: &mut App,
 ) -> Result<Vec<usize>, String> {
-    let shown = match app.mode {
-        Mode::Help { .. } => Shown {
-            pages: Vec::new(),
-            ruler: None,
-        },
-        _ => Shown {
-            pages: viewer.plan_pages(renderer),
-            ruler: ruler_band(app, viewer).and_then(|b| ruler_placement(b, &viewport())),
-        },
+    let shown = Shown {
+        pages: viewer.plan_pages(renderer),
+        ruler: ruler_band(app, viewer).and_then(|b| ruler_placement(b, &viewport())),
+        tints: tints(app),
     };
     let Changes {
         clear,
         pages,
         ruler,
+        tints,
+        hide,
     } = changes(app.shown.as_ref(), &shown);
 
     let mut out = io::stdout();
@@ -74,10 +72,18 @@ pub fn draw_frame(
         match &shown.ruler {
             Some(ruler) => place_ruler(app, ruler),
             None if !clear => {
-                let _ = drivers::graphics::terminal_graphics_hide_ruler();
+                let _ = drivers::graphics::terminal_graphics_hide(
+                    drivers::graphics::RULER_ID,
+                );
             }
             None => (),
         }
+    }
+    for t in &tints {
+        graphics::terminal_graphics_place_tint(t.id, t.z, t.col, t.row, t.cols, t.rows)?;
+    }
+    for id in hide {
+        graphics::terminal_graphics_hide(id)?;
     }
     app.shown = Some(shown);
     if let Mode::Help { scroll } = app.mode {
@@ -96,6 +102,77 @@ pub fn draw_frame(
     Ok(displayed)
 }
 
+/* Tints under the see-through panels on screen */
+fn tints(app: &App) -> Vec<Tint> {
+    let vp = viewport();
+    let mut tints = Vec::new();
+    let mut add = |slot, id, z, (left, top, width, height): (u16, u16, u16, u16)| {
+        if paint(slot).see_through() && width > 0 && height > 0 {
+            tints.push(Tint {
+                id,
+                z,
+                col: left as usize + 1,
+                row: top as usize + 1,
+                cols: width as usize,
+                rows: height as usize,
+            });
+        }
+    };
+    match app.mode {
+        Mode::Toc => {
+            let width = ui::toc_width(&vp);
+            add(
+                Slot::ContentsBackground,
+                graphics::CONTENTS_TINT_ID,
+                graphics::PANEL_Z,
+                (vp.col, vp.row, width, vp.rows),
+            );
+            let toc = &app.toc;
+            let row = toc
+                .rows()
+                .iter()
+                .position(|&r| r == toc.selected)
+                .and_then(|i| i.checked_sub(toc.scroll))
+                .filter(|&i| i < toc_visible(&vp));
+            if let Some(row) = row {
+                add(
+                    Slot::ContentsSelected,
+                    graphics::SELECTED_TINT_ID,
+                    graphics::SELECTED_Z,
+                    (
+                        vp.col + 1,
+                        vp.row + 1 + row as u16,
+                        width.saturating_sub(2),
+                        1,
+                    ),
+                );
+            }
+        }
+        Mode::Help { .. } => add(
+            Slot::HelpBackground,
+            graphics::HELP_TINT_ID,
+            graphics::PANEL_Z,
+            ui::help_rect(&vp, &app.help),
+        ),
+        _ => (),
+    }
+    tints
+}
+
+/* Sends the one-pixel images that tint see-through panels */
+pub fn send_tints() {
+    for (slot, id) in [
+        (Slot::ContentsBackground, graphics::CONTENTS_TINT_ID),
+        (Slot::ContentsSelected, graphics::SELECTED_TINT_ID),
+        (Slot::HelpBackground, graphics::HELP_TINT_ID),
+    ] {
+        let p = paint(slot);
+        if let (true, Some([r, g, b]), Some(a)) = (p.see_through(), p.rgb(), p.alpha()) {
+            let _ = graphics::terminal_graphics_send_pixel(id, [r, g, b, a]);
+        }
+    }
+}
+
 /* The pieces of the bottom border, left to right. `section` is the outline entry
  * being read. */
 pub fn status_segments(
@@ -105,38 +182,47 @@ pub fn status_segments(
 ) -> Vec<Segment> {
     let mut segments = Vec::new();
     match &app.mode {
-        Mode::Command(text) => segments.push(ui::mode_segment(&format!(":{}▏", text))),
-        Mode::Search(text) => segments.push(ui::mode_segment(&format!("/{}▏", text))),
-        Mode::Help { .. } => segments.push(ui::mode_segment("HELP")),
-        Mode::Toc => segments.push(ui::mode_segment("TOC")),
-        Mode::Normal => segments.push(ui::mode_segment("NOR")),
+        Mode::Command(text) => {
+            segments.push(Segment::new(format!(":{}▏", text), Slot::StatusCommand))
+        }
+        Mode::Search(text) => {
+            segments.push(Segment::new(format!("/{}▏", text), Slot::StatusSearch))
+        }
+        Mode::Help { .. } => segments.push(Segment::new("HELP", Slot::StatusHelp)),
+        Mode::Toc => segments.push(Segment::new("TOC", Slot::StatusContents)),
+        Mode::Normal => segments.push(Segment::new("NOR", Slot::StatusNormal)),
     }
     if viewer.pages() > 0 {
-        segments.push(Segment::new(viewer.page_status(), None));
-        segments.push(Segment::new(format!("{}%", viewer.zoom_percent()), None));
+        segments.push(Segment::new(viewer.page_status(), Slot::StatusText));
+        segments.push(Segment::new(
+            format!("{}%", viewer.zoom_percent()),
+            Slot::StatusText,
+        ));
     }
     if let Some(count) = app.count {
-        segments.push(Segment::new(count.to_string(), None));
+        segments.push(Segment::new(count.to_string(), Slot::StatusText));
     }
     match app.pending_mark {
-        Some(ConfigAction::SetMark) => segments.push(Segment::new("m…", None)),
-        Some(_) => segments.push(Segment::new("`…", None)),
+        Some(ConfigAction::SetMark) => {
+            segments.push(Segment::new("m…", Slot::StatusText))
+        }
+        Some(_) => segments.push(Segment::new("`…", Slot::StatusText)),
         None => (),
     }
     if let Some(search) = &app.search {
-        segments.push(ui::match_segment(search.status()));
+        segments.push(Segment::new(search.status(), Slot::StatusMatches));
     }
     if let Some(message) = &app.message {
-        segments.push(Segment::new(message.clone(), None));
+        segments.push(Segment::new(message.clone(), Slot::StatusMessage));
     }
     if let Some(link) = &app.link {
-        segments.push(Segment::new(link.clone(), None));
+        segments.push(Segment::new(link.clone(), Slot::StatusLink));
     }
     /* Last, so the border cuts it before anything else */
     if let Some(i) = section {
         let chain = breadcrumb(&app.toc.entries, i);
         let shown = &chain[chain.len().saturating_sub(2)..];
-        segments.push(Segment::new(shown.join(" › "), None));
+        segments.push(Segment::new(shown.join(" › "), Slot::StatusSection));
     }
     segments
 }
@@ -179,13 +265,13 @@ pub fn draw_toc(app: &App, viewer: &Viewer, section: Option<usize>) -> io::Resul
 /* Lays the ruler over its line; the image is sent again only when its pixels change,
  * not when it just moves */
 fn place_ruler(app: &mut App, placement: &RulerPlacement) {
-    const COLOR: [u8; 4] = [90, 160, 255, 70];
+    let ([r, g, b], alpha) = page_color(Slot::PagesRuler, [90, 160, 255], 70);
     let same_pixels = app.ruler_image.as_ref().is_some_and(|old| {
         (old.width, old.height, old.band)
             == (placement.width, placement.height, placement.band)
     });
     if !same_pixels {
-        let data = ruler_bitmap(placement, COLOR);
+        let data = ruler_bitmap(placement, [r, g, b, alpha]);
         if drivers::graphics::terminal_graphics_transfer_bitmap(
             drivers::graphics::RULER_ID,
             placement.width,
