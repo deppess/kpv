@@ -11,7 +11,7 @@ use crate::{
     config::Config,
     drivers::priority_channel::{unbounded_priority, PriorityReceiver, PrioritySender},
     globals::{CONFIG, RUNNING},
-    image::Image,
+    image::{invert_pixels, Image},
     labels,
     outline::{self, OutlineEntry},
     store,
@@ -395,13 +395,9 @@ impl Renderer {
                             }
 
                             let mut data_unwrapped = data.unwrap();
-                            let n = data_unwrapped.n() as usize;
                             if state.inverse {
-                                for pixel in data_unwrapped.samples_mut().chunks_mut(n) {
-                                    pixel[0] = 255 - pixel[0];
-                                    pixel[1] = 255 - pixel[1];
-                                    pixel[2] = 255 - pixel[2];
-                                }
+                                let n = data_unwrapped.n() as usize;
+                                invert_pixels(data_unwrapped.samples_mut(), n);
                             }
                             state.highlight(page, &mut data_unwrapped);
 

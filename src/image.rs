@@ -20,52 +20,19 @@ impl Image {
     pub fn new(pixmap: &Pixmap) -> Result<Self, String> {
         static ID: AtomicUsize = AtomicUsize::new(1);
 
-        const PADDING_CLR: u8 = 0u8;
         let padding = *IMAGE_PADDING.get().unwrap();
 
-        let mut data = Vec::with_capacity(
-            (2 * padding + pixmap.width() as usize) * padding * 8
-                + padding * 8
-                + (pixmap.samples().len() / 3) * 4,
-        );
-
-        data.extend(std::iter::repeat_n(
-            PADDING_CLR,
-            (2 * padding + pixmap.width() as usize) * padding * 4,
-        ));
-
-        let row_iter = pixmap
-            .samples()
-            .chunks(pixmap.width() as usize * pixmap.n() as usize);
-        for row in row_iter {
-            data.extend(std::iter::repeat_n(PADDING_CLR, padding * 4));
-
-            /* If not RGBA extend by adding the alpha channel */
-            if pixmap.n() == 3 {
-                let pixel_iter = row.chunks(3);
-                for pixel in pixel_iter {
-                    data.extend_from_slice(pixel);
-                    /* Add the alpha channel */
-                    data.push(255);
-                }
-            } else {
-                data.extend_from_slice(row);
-            }
-            data.extend(std::iter::repeat_n(PADDING_CLR, padding * 4));
-        }
-
-        data.extend(std::iter::repeat_n(
-            PADDING_CLR,
-            (2 * padding + pixmap.width() as usize) * padding * 4,
-        ));
-
         let image = Self {
-            id: ID.load(Ordering::Acquire),
+            id: ID.fetch_add(1, Ordering::AcqRel),
             dimensions: (pixmap.width() as i32, pixmap.height() as i32),
-            data,
+            data: pad_rgba(
+                pixmap.samples(),
+                pixmap.width() as usize,
+                pixmap.n() as usize,
+                padding,
+            ),
         };
 
-        ID.store(ID.load(Ordering::Acquire) + 1, Ordering::Release);
         image.transfer()?;
         Ok(image)
     }
@@ -112,6 +79,42 @@ impl Image {
         )?;
 
         Ok(())
+    }
+}
+
+/* RGBA pixels of a bitmap with `n` (3 or 4) bytes per pixel, surrounded by `padding`
+ * transparent pixels on every side. A bitmap without alpha becomes opaque. */
+pub fn pad_rgba(samples: &[u8], width: usize, n: usize, padding: usize) -> Vec<u8> {
+    let out_row = (width + 2 * padding) * 4;
+    let rows = samples.len().checked_div(width * n).unwrap_or(0);
+    let mut data = vec![0u8; out_row * (rows + 2 * padding)];
+
+    for (src, dst) in samples
+        .chunks_exact(width * n)
+        .zip(data.chunks_exact_mut(out_row).skip(padding))
+    {
+        let dst = &mut dst[padding * 4..][..width * 4];
+        if n == 3 {
+            for (px, out) in src.chunks_exact(3).zip(dst.chunks_exact_mut(4)) {
+                out[..3].copy_from_slice(px);
+                out[3] = 255;
+            }
+        } else {
+            dst.copy_from_slice(src);
+        }
+    }
+    data
+}
+
+/* Inverts the color channels of a bitmap with `n` (3 or 4) bytes per pixel and leaves
+ * the alpha channel alone */
+pub fn invert_pixels(samples: &mut [u8], n: usize) {
+    if n == 3 {
+        samples.iter_mut().for_each(|b| *b = !*b);
+    } else {
+        for px in samples.chunks_exact_mut(n) {
+            px[..3].iter_mut().for_each(|b| *b = !*b);
+        }
     }
 }
 
@@ -264,6 +267,61 @@ mod tests {
             width,
             height,
         }
+    }
+
+    /* The conversion as it was first written, one pixel at a time */
+    fn pad_rgba_slow(samples: &[u8], width: usize, n: usize, padding: usize) -> Vec<u8> {
+        let mut data = vec![0u8; (width + 2 * padding) * padding * 4];
+        for row in samples.chunks(width * n) {
+            data.extend(std::iter::repeat_n(0u8, padding * 4));
+            if n == 3 {
+                for pixel in row.chunks(3) {
+                    data.extend_from_slice(pixel);
+                    data.push(255);
+                }
+            } else {
+                data.extend_from_slice(row);
+            }
+            data.extend(std::iter::repeat_n(0u8, padding * 4));
+        }
+        data.extend(std::iter::repeat_n(
+            0u8,
+            (width + 2 * padding) * padding * 4,
+        ));
+        data
+    }
+
+    #[test]
+    fn padding_matches_the_pixel_by_pixel_conversion() {
+        for n in [3, 4] {
+            for (width, rows, padding) in [(5, 3, 2), (1, 1, 0), (7, 4, 3), (4, 0, 2)] {
+                let samples: Vec<u8> =
+                    (0..width * rows * n).map(|i| (i * 7 + 1) as u8).collect();
+                assert_eq!(
+                    pad_rgba(&samples, width, n, padding),
+                    pad_rgba_slow(&samples, width, n, padding),
+                    "n {n}, {width}x{rows}, padding {padding}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn padding_is_clear_and_the_page_opaque() {
+        let data = pad_rgba(&[10, 20, 30], 1, 3, 1);
+        assert_eq!(data.len(), 3 * 3 * 4);
+        assert_eq!(&data[(3 + 1) * 4..][..4], &[10, 20, 30, 255]);
+        assert_eq!(data.iter().filter(|b| **b != 0).count(), 4);
+    }
+
+    #[test]
+    fn inverting_keeps_alpha() {
+        let mut rgb = [0, 100, 255, 1, 2, 3];
+        invert_pixels(&mut rgb, 3);
+        assert_eq!(rgb, [255, 155, 0, 254, 253, 252]);
+        let mut rgba = [0, 100, 255, 7, 1, 2, 3, 9];
+        invert_pixels(&mut rgba, 4);
+        assert_eq!(rgba, [255, 155, 0, 7, 254, 253, 252, 9]);
     }
 
     #[test]
