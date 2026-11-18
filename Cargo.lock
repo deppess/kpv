@@ -115,7 +115,6 @@ checksum = "22ec99545bb0ed0ea7bb9b8e1e9122ea386ff8a48c0922e43f36d45ab09e0e80"
 [[package]]
 name = "crossterm"
 version = "0.29.0"
-source = "git+https://github.com/monoamine11231/crossterm-apc.git#289320dcb9e9f26967ec01864e6baf2d06b07ff9"
 dependencies = [
  "bitflags 2.9.1",
  "crossterm_winapi",

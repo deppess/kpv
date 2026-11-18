@@ -25,7 +25,7 @@ features = []
 default-features = false
 
 [patch.crates-io]
-crossterm = { git = "https://github.com/monoamine11231/crossterm-apc.git" }
+crossterm = { path = "vendor/crossterm" }
 
 [profile.release]
 panic = "abort"
