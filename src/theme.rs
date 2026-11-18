@@ -269,6 +269,7 @@ pub enum Slot {
     ContentsCurrent,
     HelpBackground,
     HelpBorder,
+    HelpHeading,
     HelpKeys,
     HelpText,
     HelpMuted,
@@ -317,7 +318,7 @@ const fn spec(
     }
 }
 
-pub const SPECS: [Spec; 42] = [
+pub const SPECS: [Spec; 43] = [
     spec(
         Slot::FrameBorder,
         "frame",
@@ -509,6 +510,14 @@ pub const SPECS: [Spec; 42] = [
         "bright-cyan",
         false,
         "Its border",
+    ),
+    spec(
+        Slot::HelpHeading,
+        "help",
+        "heading",
+        "bright-cyan",
+        false,
+        "The names of the groups",
     ),
     spec(Slot::HelpKeys, "help", "keys", "default", false, "The keys"),
     spec(

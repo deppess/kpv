@@ -133,6 +133,8 @@ fn tints(app: &App) -> Vec<Tint> {
     };
     match app.mode {
         Mode::Toc => {
+            /* Beside the note, with the pages */
+            let vp = viewport();
             let width = ui::toc_width(&vp);
             add(
                 Slot::ContentsBackground,
@@ -346,7 +348,7 @@ pub fn draw_toc(app: &App, viewer: &Viewer, section: Option<usize>) -> io::Resul
     let visible: Vec<TocRow> = rows
         .iter()
         .skip(toc.scroll)
-        .take(toc_visible(&inner()))
+        .take(toc_visible(&viewport()))
         .map(|&i| {
             let entry = &toc.entries[i];
             TocRow {

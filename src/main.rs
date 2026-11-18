@@ -390,7 +390,7 @@ fn main() {
                 }
                 apply_layout(&mut viewer, &mut app);
                 viewer.refit();
-                app.toc.scroll_by(0, toc_visible(&inner()));
+                app.toc.scroll_by(0, toc_visible(&ui::viewport()));
                 if let Mode::Help { scroll } = &mut app.mode {
                     let max = help_max_scroll(app.help.len(), help_visible(&inner()));
                     *scroll = (*scroll).min(max);

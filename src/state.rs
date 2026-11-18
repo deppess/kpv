@@ -173,29 +173,170 @@ pub fn count_digit(count: Option<usize>, key: &KeyEvent) -> Option<usize> {
     Some((count.unwrap_or(0) * 10 + digit).min(99_999))
 }
 
-/* `(keys, description)` rows for the help overlay, keys grouped per action */
-pub fn help_entries(binds: &Keybinds<ConfigAction>) -> Vec<(String, String)> {
-    let mut entries: Vec<(String, String)> = ConfigAction::ALL
-        .iter()
-        .filter_map(|action| {
+/* One line of the key list: a group's name, or keys and what they do */
+#[derive(Clone, Debug, PartialEq)]
+pub enum HelpItem {
+    Heading(&'static str),
+    Keys(String, String),
+}
+
+/* A group of the key list: its name, its actions, then keys that work inside a panel
+ * or prompt with what they do */
+type Group = (
+    &'static str,
+    &'static [ConfigAction],
+    &'static [(&'static str, &'static str)],
+);
+
+const GROUPS: [Group; 9] = [
+    (
+        "Moving",
+        &[
+            ConfigAction::MoveDown,
+            ConfigAction::MoveUp,
+            ConfigAction::MoveLeft,
+            ConfigAction::MoveRight,
+            ConfigAction::HalfPageDown,
+            ConfigAction::HalfPageUp,
+            ConfigAction::NextPage,
+            ConfigAction::PrevPage,
+            ConfigAction::JumpFirstPage,
+            ConfigAction::JumpLastPage,
+        ],
+        &[("1-9", "A count first: 5j, 12G, 3 Ctrl+f")],
+    ),
+    (
+        "Jumps and marks",
+        &[
+            ConfigAction::JumpBack,
+            ConfigAction::JumpForward,
+            ConfigAction::SetMark,
+            ConfigAction::GoToMark,
+        ],
+        &[("`` or ''", "Back to where the last jump started")],
+    ),
+    (
+        "Search",
+        &[
+            ConfigAction::Search,
+            ConfigAction::NextMatch,
+            ConfigAction::PrevMatch,
+            ConfigAction::ClearSearch,
+        ],
+        &[],
+    ),
+    (
+        "View",
+        &[
+            ConfigAction::ZoomIn,
+            ConfigAction::ZoomOut,
+            ConfigAction::FitWidth,
+            ConfigAction::FitPage,
+            ConfigAction::CenterViewer,
+            ConfigAction::ToggleRuler,
+            ConfigAction::ToggleInverse,
+            ConfigAction::ToggleAlpha,
+        ],
+        &[],
+    ),
+    (
+        "Contents",
+        &[ConfigAction::ShowOutline],
+        &[
+            ("j k", "Move in the list"),
+            ("l h", "Unfold, fold"),
+            ("za zM zR", "Fold one, fold all, unfold all"),
+            ("/", "Keep only entries with the text"),
+            ("Enter", "Go there and close"),
+            ("Space", "Go there, keep it open"),
+            ("Esc", "Clear the filter, then close"),
+        ],
+    ),
+    (
+        "Notes",
+        &[
+            ConfigAction::FocusNote,
+            ConfigAction::FocusPdf,
+            ConfigAction::HideNote,
+            ConfigAction::SwitchNote,
+            ConfigAction::NewNote,
+        ],
+        &[
+            ("type", "In the picker: find a note"),
+            ("Up Down", "In the picker: move"),
+            ("Enter", "In the picker: open"),
+        ],
+    ),
+    (
+        "Commands",
+        &[ConfigAction::CommandLine],
+        &[
+            (":45", "The page printed as 45"),
+            (":#45", "The 45th page of the file"),
+            (":offset 12", "Make the 13th page printed page 1"),
+            (":marks", "List the marks"),
+            (":delm a", "Delete mark a (:delm! all)"),
+            (":noh", "Clear the search"),
+            (":q", "Quit"),
+        ],
+    ),
+    (
+        "This list",
+        &[ConfigAction::ShowHelp],
+        &[
+            ("j k  d u", "Scroll a line, half a screen"),
+            ("g G", "Top, bottom"),
+            ("q Esc", "Close"),
+        ],
+    ),
+    ("Quitting", &[ConfigAction::Quit], &[]),
+];
+
+/* A key as the list shows it: `+` for Plus, Space spelled out */
+fn key_name(key: &keybinds::KeyInput) -> String {
+    let name = key.to_string();
+    match name.as_str() {
+        "Plus" => "+".to_owned(),
+        _ => name,
+    }
+}
+
+/* A key sequence as the list shows it: `gg` rather than `g g` when every key is one
+ * plain character */
+pub fn sequence_name(seq: &[keybinds::KeyInput]) -> String {
+    let names: Vec<String> = seq.iter().map(key_name).collect();
+    if names.len() > 1 && names.iter().all(|n| n.chars().count() == 1) {
+        names.concat()
+    } else {
+        names.join(" ")
+    }
+}
+
+/* The key list from the bindings in use: every bound action in its group, its keys
+ * together, and the keys of the panels and prompts */
+pub fn help_entries(binds: &Keybinds<ConfigAction>) -> Vec<HelpItem> {
+    let mut items = Vec::new();
+    for (heading, actions, extra) in GROUPS {
+        items.push(HelpItem::Heading(heading));
+        for action in actions {
             let keys: Vec<String> = binds
                 .as_slice()
                 .iter()
                 .filter(|b| b.action == *action)
-                .map(|b| b.seq.to_string())
+                .map(|b| sequence_name(b.seq.as_slice()))
                 .collect();
-            (!keys.is_empty()).then(|| (keys.join(", "), action.describe().to_owned()))
-        })
-        .collect();
-    entries.push((
-        "1-9".to_owned(),
-        "Count before a key: 12G page #12, 3 Ctrl+f three pages".to_owned(),
-    ));
-    entries.push((
-        "Esc".to_owned(),
-        "In a prompt or this list: cancel or close".to_owned(),
-    ));
-    entries
+            if !keys.is_empty() {
+                items.push(HelpItem::Keys(
+                    keys.join(", "),
+                    action.describe().to_owned(),
+                ));
+            }
+        }
+        for (keys, what) in extra {
+            items.push(HelpItem::Keys(keys.to_string(), what.to_string()));
+        }
+    }
+    items
 }
 
 #[cfg(test)]
@@ -320,10 +461,39 @@ mod tests {
         binds.bind("Down", ConfigAction::MoveDown).unwrap();
         binds.bind("?", ConfigAction::ShowHelp).unwrap();
         binds.bind("g g", ConfigAction::JumpFirstPage).unwrap();
-        let entries = help_entries(&binds);
-        assert_eq!(entries[0], ("j, Down".to_owned(), "Move down".to_owned()));
-        assert!(entries.iter().any(|(k, _)| k == "g g"));
-        assert!(entries.iter().any(|(k, _)| k == "?"));
-        assert_eq!(entries.last().unwrap().0, "Esc");
+        binds.bind("Plus", ConfigAction::ZoomIn).unwrap();
+        binds.bind("Ctrl+Space x", ConfigAction::HideNote).unwrap();
+        let items = help_entries(&binds);
+        let keys = |k: &str| {
+            items
+                .iter()
+                .any(|i| matches!(i, HelpItem::Keys(x, _) if x == k))
+        };
+        assert_eq!(items[0], HelpItem::Heading("Moving"));
+        assert_eq!(
+            items[1],
+            HelpItem::Keys(
+                "j, Down".to_owned(),
+                ConfigAction::MoveDown.describe().to_owned()
+            )
+        );
+        assert!(keys("gg") && keys("?") && keys("+") && keys("Ctrl+Space x"));
+        assert!(
+            keys(":45") && keys("za zM zR"),
+            "panel and command keys are listed"
+        );
+    }
+
+    #[test]
+    fn every_action_is_in_a_group_of_the_key_list() {
+        for action in ConfigAction::ALL {
+            assert!(
+                GROUPS
+                    .iter()
+                    .any(|(_, actions, _)| actions.contains(&action)),
+                "{:?} isn't in the key list",
+                action
+            );
+        }
     }
 }

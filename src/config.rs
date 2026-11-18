@@ -84,7 +84,9 @@ pub enum ConfigAction {
 }
 
 impl ConfigAction {
-    /* Every action in the order the help overlay lists them */
+    /* Every action, for the tests that check each one has a key and a place in the
+     * key list */
+    #[cfg(test)]
     pub const ALL: [ConfigAction; 35] = [
         ConfigAction::MoveDown,
         ConfigAction::MoveUp,
@@ -137,47 +139,41 @@ impl ConfigAction {
 
     pub fn describe(self) -> &'static str {
         match self {
-            ConfigAction::MoveDown => "Move down",
-            ConfigAction::MoveUp => "Move up",
-            ConfigAction::MoveLeft => "Move left",
-            ConfigAction::MoveRight => "Move right",
-            ConfigAction::NextPage => "Next page (count: that many pages)",
-            ConfigAction::PrevPage => "Previous page (count: that many pages)",
-            ConfigAction::JumpFirstPage => "First page (count: go to that page)",
-            ConfigAction::JumpLastPage => "Last page (count: go to that page)",
-            ConfigAction::CommandLine => {
-                "Command line  :45 printed page  :#45 page in file  :q quit  :noh clear"
-            }
-            ConfigAction::Search => "Search the document",
-            ConfigAction::NextMatch => "Next search match",
-            ConfigAction::PrevMatch => "Previous search match",
-            ConfigAction::ClearSearch => "Clear the search and its highlights",
-            ConfigAction::ShowOutline => "Table of contents",
+            ConfigAction::MoveDown => "Scroll down (ruler on: next line)",
+            ConfigAction::MoveUp => "Scroll up (ruler on: line before)",
+            ConfigAction::MoveLeft => "Scroll left",
+            ConfigAction::MoveRight => "Scroll right",
+            ConfigAction::NextPage => "Next page",
+            ConfigAction::PrevPage => "Previous page",
+            ConfigAction::JumpFirstPage => "First page, or with a count that page",
+            ConfigAction::JumpLastPage => "Last page, or with a count that page",
+            ConfigAction::CommandLine => "Type a command",
+            ConfigAction::Search => "Search",
+            ConfigAction::NextMatch => "Next match",
+            ConfigAction::PrevMatch => "Previous match",
+            ConfigAction::ClearSearch => "Clear the search",
+            ConfigAction::ShowOutline => "Open the contents",
             ConfigAction::JumpBack => "Back to where the last jump started",
-            ConfigAction::JumpForward => "Forward again after going back",
-            ConfigAction::SetMark => "Set a mark: then a letter a-z",
-            ConfigAction::GoToMark => {
-                "Go to a mark: then its letter, or again to go back"
-            }
+            ConfigAction::JumpForward => "Forward again",
+            ConfigAction::SetMark => "Set a mark, then a letter",
+            ConfigAction::GoToMark => "Go to a mark, then its letter",
             ConfigAction::ZoomIn => "Zoom in",
             ConfigAction::ZoomOut => "Zoom out",
             ConfigAction::CenterViewer => "Center the page",
             ConfigAction::ToggleInverse => "Invert colors",
             ConfigAction::HalfPageDown => "Half a screen down",
             ConfigAction::HalfPageUp => "Half a screen up",
-            ConfigAction::FitWidth => "Fit the page width (100%)",
+            ConfigAction::FitWidth => "Fit the width (100%)",
             ConfigAction::FitPage => "Fit the whole page",
-            ConfigAction::ToggleRuler => {
-                "Reading ruler: j and k then move it line by line"
-            }
+            ConfigAction::ToggleRuler => "Reading ruler on or off",
             ConfigAction::ToggleAlpha => "Transparent page background",
-            ConfigAction::FocusNote => "Go to the note, opening it if it's hidden",
+            ConfigAction::FocusNote => "Go to the note, opening it",
             ConfigAction::FocusPdf => "Go to the PDF",
             ConfigAction::HideNote => "Hide the note (it's saved)",
             ConfigAction::SwitchNote => "Switch to another note",
-            ConfigAction::NewNote => "New note with a name you give it",
-            ConfigAction::ShowHelp => "Show this list",
-            ConfigAction::Quit => "Quit",
+            ConfigAction::NewNote => "New note with a name you type",
+            ConfigAction::ShowHelp => "This list",
+            ConfigAction::Quit => "Quit viewmer",
         }
     }
 }

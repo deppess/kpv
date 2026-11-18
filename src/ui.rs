@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicU16, Ordering};
 
 use crate::globals::TERMINAL_SIZE;
 use crate::notes::{pane::Cell, picker::PickerRow};
+use crate::state::HelpItem;
 use crate::theme::{paint, Slot};
 
 /* The area inside the border where pages are drawn. Positions are 0-indexed cells,
@@ -215,26 +216,49 @@ pub fn draw_frame(title: &str, segments: &[Segment]) -> io::Result<()> {
     Ok(())
 }
 
-/* One line of the help overlay: the keys, padded to one column, and what they do */
+/* One line of the key list: a group's name, or the keys padded to one column and what
+ * they do, or a blank line between groups */
 #[derive(Debug, PartialEq)]
 pub struct HelpLine {
     pub keys: String,
     pub what: String,
+    pub heading: bool,
 }
 
-pub fn help_lines(entries: &[(String, String)]) -> Vec<HelpLine> {
-    let width = entries
+pub fn help_lines(items: &[HelpItem]) -> Vec<HelpLine> {
+    let width = items
         .iter()
-        .map(|(k, _)| k.chars().count())
+        .filter_map(|i| match i {
+            HelpItem::Keys(keys, _) => Some(keys.chars().count()),
+            HelpItem::Heading(_) => None,
+        })
         .max()
         .unwrap_or(0);
-    entries
-        .iter()
-        .map(|(keys, what)| HelpLine {
-            keys: format!("{:<width$}   ", keys),
-            what: what.clone(),
-        })
-        .collect()
+    let mut lines = Vec::new();
+    for item in items {
+        match item {
+            HelpItem::Heading(name) => {
+                if !lines.is_empty() {
+                    lines.push(HelpLine {
+                        keys: String::new(),
+                        what: String::new(),
+                        heading: false,
+                    });
+                }
+                lines.push(HelpLine {
+                    keys: String::new(),
+                    what: name.to_string(),
+                    heading: true,
+                });
+            }
+            HelpItem::Keys(keys, what) => lines.push(HelpLine {
+                keys: format!("  {:<width$}   ", keys),
+                what: what.clone(),
+                heading: false,
+            }),
+        }
+    }
+    lines
 }
 
 /* Where the help box goes in the viewport for `lines`: left, top, width and height in
@@ -290,8 +314,26 @@ pub fn draw_help(lines: &[HelpLine], scroll: usize) -> io::Result<()> {
         Print("╮"),
     )?;
     for i in 0..visible {
-        let (keys, what) = lines
-            .get(scroll + i)
+        let line = lines.get(scroll + i);
+        if let Some(heading) = line.filter(|l| l.heading) {
+            let text = truncate(&heading.what, inner.saturating_sub(2));
+            let pad = inner.saturating_sub(2 + text.chars().count());
+            queue!(
+                out,
+                MoveTo(left, top + 1 + i as u16),
+                SetForegroundColor(border),
+                Print("│ "),
+                SetForegroundColor(color(Slot::HelpHeading)),
+                SetAttribute(Attribute::Bold),
+                Print(&text),
+                SetAttribute(Attribute::NormalIntensity),
+                Print(" ".repeat(pad)),
+                SetForegroundColor(border),
+                Print(" │"),
+            )?;
+            continue;
+        }
+        let (keys, what) = line
             .map(|l| (l.keys.as_str(), l.what.as_str()))
             .unwrap_or(("", ""));
         let text = truncate(&format!("{}{}", keys, what), inner.saturating_sub(2));
@@ -314,7 +356,7 @@ pub fn draw_help(lines: &[HelpLine], scroll: usize) -> io::Result<()> {
             Print(" │"),
         )?;
     }
-    let hint = " j/k scroll · q close ";
+    let hint = " j k  d u  g G scroll · q close ";
     queue!(
         out,
         MoveTo(left, top + height as u16 - 1),
@@ -379,8 +421,9 @@ pub struct TocRow {
 
 /* Draws the contents panel down the left of the viewport. `rows` are the visible ones,
  * `position` goes in the top edge and `footer` in the bottom edge. */
+/* The contents panel opens at the left of the pages, beside the note when it's open */
 pub fn draw_toc(rows: &[TocRow], position: &str, footer: &str) -> io::Result<()> {
-    let vp = inner();
+    let vp = viewport();
     let width = toc_width(&vp) as usize;
     if width < 8 || vp.rows < 3 {
         return Ok(());
@@ -821,14 +864,26 @@ mod tests {
     #[test]
     fn help_lines_align_descriptions() {
         let lines = help_lines(&[
-            ("j, Down".to_owned(), "Move down".to_owned()),
-            ("?".to_owned(), "Show keys".to_owned()),
+            HelpItem::Heading("Moving"),
+            HelpItem::Keys("j, Down".to_owned(), "Move down".to_owned()),
+            HelpItem::Heading("Other"),
+            HelpItem::Keys("?".to_owned(), "Show keys".to_owned()),
         ]);
         let shown: Vec<String> = lines
             .iter()
             .map(|l| format!("{}{}", l.keys, l.what))
             .collect();
-        assert_eq!(shown, vec!["j, Down   Move down", "?         Show keys"]);
+        assert_eq!(
+            shown,
+            vec![
+                "Moving",
+                "  j, Down   Move down",
+                "",
+                "Other",
+                "  ?         Show keys"
+            ]
+        );
+        assert!(lines[0].heading && !lines[1].heading && !lines[2].heading);
     }
 
     #[test]

@@ -73,7 +73,7 @@ pub fn handle_key(
         }
         Mode::Toc => {
             app.message = None;
-            match app.toc.key(key, toc_visible(&inner())) {
+            match app.toc.key(key, toc_visible(&viewport())) {
                 TocKey::Handled => (),
                 TocKey::Close => app.mode = Mode::Normal,
                 TocKey::Jump { close } => {
@@ -269,7 +269,7 @@ pub fn handle_mouse_scroll(
     app: &mut App,
 ) -> bool {
     let config = CONFIG.get().unwrap();
-    let over_toc = app.mode == Mode::Toc && ui::over_toc(&inner(), x, y);
+    let over_toc = app.mode == Mode::Toc && ui::over_toc(&viewport(), x, y);
     if !over_toc && !matches!(app.mode, Mode::Help { .. }) {
         if let Some((col, row)) = over_notes(app, x, y) {
             if let Some(editor) = &mut app.notes.editor {
@@ -291,7 +291,7 @@ pub fn handle_mouse_scroll(
         return false;
     }
     if app.mode == Mode::Toc {
-        let visible = toc_visible(&inner());
+        let visible = toc_visible(&viewport());
         match kind {
             MouseEventKind::ScrollDown => app.toc.scroll_by(3, visible),
             MouseEventKind::ScrollUp => app.toc.scroll_by(-3, visible),
@@ -463,7 +463,7 @@ pub fn use_mark(kind: ConfigAction, c: char, viewer: &mut Viewer, app: &mut App)
 pub fn reveal_section(app: &mut App, viewer: &Viewer) {
     let (page, y) = viewer.reading_spot();
     let section = current_section(&app.toc.entries, page, y);
-    app.toc.reveal(section, toc_visible(&inner()));
+    app.toc.reveal(section, toc_visible(&viewport()));
 }
 
 /* Goes to the selected entry of the panel */
@@ -482,7 +482,7 @@ pub fn toc_jump(viewer: &mut Viewer, app: &mut App) {
 
 /* A click on the panel: on a fold marker it folds, elsewhere on an entry it goes there */
 pub fn toc_click(mouse: MouseEvent, viewer: &mut Viewer, app: &mut App) {
-    let vp = inner();
+    let vp = viewport();
     let Some((row, col)) = ui::toc_hit(&vp, mouse.column, mouse.row) else {
         return;
     };
@@ -549,7 +549,7 @@ pub fn handle_pointer(
 ) -> bool {
     let clicked = mouse.kind.is_down();
     let over_panel =
-        app.mode == Mode::Toc && ui::over_toc(&inner(), mouse.column, mouse.row);
+        app.mode == Mode::Toc && ui::over_toc(&viewport(), mouse.column, mouse.row);
     if over_panel {
         /* The panel covers the page: links under it can't be hovered or clicked */
         set_pointer(app, PointerShape::Default);
@@ -674,7 +674,7 @@ fn over_notes(app: &App, x: u16, y: u16) -> Option<(u16, u16)> {
  * reaches the editor. `true` when the event was the panel's. */
 pub fn notes_mouse(mouse: &mut MouseEvent, viewer: &mut Viewer, app: &mut App) -> bool {
     if !app.notes.open
-        || (app.mode == Mode::Toc && ui::over_toc(&inner(), mouse.column, mouse.row))
+        || (app.mode == Mode::Toc && ui::over_toc(&viewport(), mouse.column, mouse.row))
     {
         return false;
     }
@@ -743,11 +743,8 @@ pub fn layer_popup(matcher: &Keybinds<ConfigAction>) -> Option<ui::Layer> {
             b.seq.as_slice().len() > typed.len() && b.seq.as_slice().starts_with(typed)
         })
         .map(|b| {
-            let rest: Vec<String> = b.seq.as_slice()[typed.len()..]
-                .iter()
-                .map(|k| k.to_string())
-                .collect();
-            (rest.join(" "), b.action.describe().to_owned())
+            let rest = sequence_name(&b.seq.as_slice()[typed.len()..]);
+            (rest, b.action.describe().to_owned())
         })
         .collect();
     Some(ui::Layer { title, keys })
