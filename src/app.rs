@@ -165,7 +165,7 @@ pub fn open_store(
     viewer: &mut Viewer,
     marks: &mut BTreeMap<char, Spot>,
 ) -> Option<Store> {
-    if !CONFIG.get().unwrap().state.enabled {
+    if !CONFIG.get().unwrap().viewer.remember_position {
         return None;
     }
     let mut store = Store::new(Store::default_dir()?, id, Path::new(file));

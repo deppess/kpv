@@ -813,6 +813,7 @@ dependencies = [
  "signal-hook",
  "textwrap",
  "toml",
+ "toml_edit",
 ]
 
 [[package]]

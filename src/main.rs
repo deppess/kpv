@@ -145,12 +145,10 @@ fn main() {
     let pxpercol = winsize.width as f64 / winsize.columns as f64;
     let pxperrow = winsize.height as f64 / winsize.rows as f64;
 
-    let paddingcol = (pxpercol * config.viewer.render_precision
-        / config.viewer.scale_min as f64)
-        .ceil() as usize;
-    let paddingrow = (pxperrow * config.viewer.render_precision
-        / config.viewer.scale_min as f64)
-        .ceil() as usize;
+    let paddingcol =
+        (pxpercol * config.viewer.sharpness / SCALE_MIN as f64).ceil() as usize;
+    let paddingrow =
+        (pxperrow * config.viewer.sharpness / SCALE_MIN as f64).ceil() as usize;
 
     IMAGE_PADDING.get_or_init(|| std::cmp::max(paddingcol, paddingrow));
 

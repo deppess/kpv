@@ -17,6 +17,13 @@ use crate::{
     ui::viewport,
 };
 
+/* The smallest zoom, in pixels per page unit; the image padding is worked out for it */
+pub const SCALE_MIN: f32 = 0.2;
+/* How much memory the page images may take before the oldest are dropped */
+const MEMORY_LIMIT: usize = 300 << 20;
+/* Pages kept ready before and after the ones in view */
+const PAGES_PRELOADED: usize = 3;
+
 #[derive(Clone, Copy, Debug)]
 pub struct DisplayRect {
     pub x: i32,
@@ -266,7 +273,7 @@ impl Viewer {
             return;
         }
         let page = self.page_view;
-        let margin = CONFIG.get().unwrap().viewer.margin_bottom;
+        let margin = CONFIG.get().unwrap().viewer.page_gap;
         let height = (self.page_height(page).unwrap_or(1.0) - margin).max(1.0);
         let width = self.page_width(page).unwrap_or(1.0).max(1.0);
         let vp = viewport();
@@ -377,8 +384,9 @@ impl Viewer {
         res
     }
 
-    pub fn scale(&mut self, scale: f32) {
-        self.scale += scale;
+    /* Zooms in (or out, when negative) by `percent` of the page width */
+    pub fn zoom_by(&mut self, percent: f32) {
+        self.scale += self.fit_scale * percent / 100.0;
         self.bound_viewer();
     }
 
@@ -451,12 +459,10 @@ impl Viewer {
     }
 
     pub fn bound_viewer(&mut self) {
-        let config = CONFIG.get().unwrap();
-
         let vp = viewport();
         let (vp_width, vp_height) = (vp.width(), vp.height());
 
-        self.scale = f32::max(self.scale, config.viewer.scale_min);
+        self.scale = f32::max(self.scale, SCALE_MIN);
         self.offset.0 = f32::max(
             self.offset.0,
             f32::min(0.0f32, vp_width - self.max_width * self.scale),
@@ -520,7 +526,7 @@ impl Viewer {
         /* Current viewport height */
         let terminal_height = viewport().height();
         /* Bottom margin */
-        let margin_bottom = CONFIG.get().unwrap().viewer.margin_bottom;
+        let margin_bottom = CONFIG.get().unwrap().viewer.page_gap;
         /* Number of pages */
         let pages_num = self.cumulative_heights.len();
         /* The index of the first rendered page */
@@ -590,7 +596,7 @@ impl Viewer {
 
     /* What a hovered link points to, for the status bar */
     pub fn link_hint(&self, link: &Link) -> Option<String> {
-        if !CONFIG.get().unwrap().viewer.uri_hint.enabled {
+        if !CONFIG.get().unwrap().viewer.link_hints {
             return None;
         }
         if link.uri.starts_with('#') {
@@ -604,8 +610,6 @@ impl Viewer {
     /* Stores a rendered page, or with `None` forgets it. The oldest pages are dropped
      * while the images take more memory than allowed. */
     pub fn handle_image(&mut self, page: usize, image: Option<Arc<RwLock<Image>>>) {
-        let config = CONFIG.get().unwrap();
-
         self.remove_image(page);
         let Some(image) = image else { return };
 
@@ -616,7 +620,7 @@ impl Viewer {
         self.failures.remove(&page);
         self.scheduled4render.remove(&page);
 
-        while self.memory_used >= config.viewer.memory_limit {
+        while self.memory_used >= MEMORY_LIMIT {
             let Some(oldest) = self.last_rendered.pop_front() else {
                 break;
             };
@@ -669,7 +673,7 @@ impl Viewer {
     /* The page images a frame shows: the pages in view, and a few before and after
      * them kept ready so that scrolling doesn't show blank pages */
     pub fn plan_pages(&mut self, renderer: &Renderer) -> Vec<PagePlacement> {
-        let preloaded = CONFIG.get().unwrap().viewer.pages_preloaded;
+        let preloaded = PAGES_PRELOADED;
         let mut plan = Vec::new();
 
         /* The index of the first rendered page */

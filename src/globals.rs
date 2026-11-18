@@ -15,35 +15,26 @@ Global options:
 pub const VERSION: &str = "0.1.0";
 pub const RELEASED: &str = "2026-11-08";
 pub const CONFIG_FILENAME: &str = "viewmer";
-pub const DEFAULT_CONFIG: &str = r#"
+pub const DEFAULT_CONFIG: &str = r#"# viewmer settings. Colors are in theme.toml next to this file.
+
 [viewer]
-# Determines how fast the document is scrolled
-scroll_speed = 20.0
-# Determines at what precision the pages are rendered
-render_precision = 1.5
-# Determines the image data limit that the software holds in RAM (bytes)
-memory_limit = 314572800
-# Minimum scale amount allowed
-scale_min = 0.2
-# Determines the default scale of the viewer when starting the viewer
-scale_default = 0.5
-# Determines the scaling amount when zooming in or out
-scale_amount = 0.5
-# Determines the margin on the bottom of each page
-margin_bottom = 10.0
-# Determines the amount of pages that are preloaded in advance 
-pages_preloaded = 3
-# Inverse vertical scroll
-inverse_scroll = false
-
-[viewer.uri_hint]
+# How far one step of j, k, the arrows or the mouse wheel moves
+scroll_step = 20
+# How much + and - zoom, in percent of the page width
+zoom_step = 10
+# How finely pages are drawn. 1.5 suits most screens; 2 or 3 is sharper on
+# high-resolution screens and when zoomed in, but slower and uses more memory
+sharpness = 1.5
+# Space between pages
+page_gap = 10
+# Turn the mouse wheel's direction around
+invert_wheel = false
 # Show where a hovered link points in the status bar
-enabled = true
+link_hints = true
+# Open every file where you left it, with its marks
+remember_position = true
 
-[state]
-# Remember where you were in every file, and its page offset
-enabled = true
-
+# Keys, as "key" = "Action". The actions are listed in the README.
 [bindings]
 "Ctrl+a" = "ToggleAlpha"
 "Ctrl+r" = "ToggleInverse"

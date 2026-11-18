@@ -15,32 +15,19 @@ use crate::globals::{CONFIG_FILENAME, DEFAULT_CONFIG};
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub viewer: ConfigViewer,
-    pub state: ConfigState,
     pub bindings: Option<Keybinds<ConfigAction>>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ConfigViewer {
-    pub scroll_speed: f32,
-    pub render_precision: f64,
-    pub memory_limit: usize,
-    pub scale_min: f32,
-    pub scale_amount: f32,
-    pub margin_bottom: f32,
-    pub pages_preloaded: usize,
-    pub inverse_scroll: bool,
-
-    pub uri_hint: ConfigViewerUriHint,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ConfigViewerUriHint {
-    pub enabled: bool,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ConfigState {
-    pub enabled: bool,
+    pub scroll_step: f32,
+    /* Percent of the page width */
+    pub zoom_step: f32,
+    pub sharpness: f64,
+    pub page_gap: f32,
+    pub invert_wheel: bool,
+    pub link_hints: bool,
+    pub remember_position: bool,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
@@ -253,7 +240,9 @@ fn fix_config_toml(
             /* Add new config variable that has been added in new version */
             current.insert(key.clone(), default[&key].clone());
             config_has_changed = true;
-        } else if discriminant(&current[&key]) != discriminant(&default[&key]) {
+        } else if discriminant(&current[&key]) != discriminant(&default[&key])
+            && !(is_number(&current[&key]) && is_number(&default[&key]))
+        {
             /* If different variants, infer the variant from the default */
             current[&key] = default[&key].clone();
             config_has_changed = true;
@@ -284,6 +273,142 @@ pub fn config_folder() -> Result<PathBuf, String> {
     Ok(folder)
 }
 
+/* Settings that later versions renamed or moved: the old place and the new key in
+ * [viewer]. Their values carry over. */
+const RENAMED: [(&[&str], &str); 6] = [
+    (&["viewer", "scroll_speed"], "scroll_step"),
+    (&["viewer", "render_precision"], "sharpness"),
+    (&["viewer", "margin_bottom"], "page_gap"),
+    (&["viewer", "inverse_scroll"], "invert_wheel"),
+    (&["viewer", "uri_hint", "enabled"], "link_hints"),
+    (&["state", "enabled"], "remember_position"),
+];
+
+/* Brings a config written by an older version up to date: renamed settings move to
+ * their new names with their values, old ones go, new ones come in with the comments
+ * they ship with. Everything else in the file, comments and order included, stays as
+ * it is. `None` when nothing needed changing. */
+pub fn upgrade(text: &str) -> Result<Option<String>, String> {
+    let mut doc = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|x| format!("Could not parse the config as TOML: {}", x))?;
+    let default_doc = DEFAULT_CONFIG
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|x| format!("Could not parse the default config: {}", x))?;
+
+    let mut changed = false;
+    for (path, new) in RENAMED {
+        let Some(value) = take(doc.as_table_mut(), path) else {
+            continue;
+        };
+        changed = true;
+        if !doc.contains_key("viewer") {
+            doc.insert("viewer", toml_edit::table());
+        }
+        let Some(viewer) = doc["viewer"].as_table_mut() else {
+            continue;
+        };
+        if !viewer.contains_key(new) {
+            let mut value = value;
+            value.decor_mut().clear();
+            match default_doc["viewer"].as_table().and_then(|t| t.key(new)) {
+                Some(key) => {
+                    viewer.insert_formatted(key, toml_edit::Item::Value(value));
+                }
+                None => {
+                    viewer.insert(new, toml_edit::Item::Value(value));
+                }
+            }
+        }
+    }
+
+    let mut current = doc
+        .to_string()
+        .parse::<Table>()
+        .map_err(|x| format!("Could not parse the config as TOML: {}", x))?;
+    let default = DEFAULT_CONFIG
+        .parse::<Table>()
+        .map_err(|x| format!("Could not parse the default config: {}", x))?;
+    changed |= fix_config_toml(&mut current, &default)?;
+    if !changed {
+        return Ok(None);
+    }
+    apply(doc.as_table_mut(), &current, default_doc.as_table());
+    Ok(Some(doc.to_string()))
+}
+
+/* Removes the value at `path` and returns it; a table left empty goes too */
+fn take(table: &mut toml_edit::Table, path: &[&str]) -> Option<toml_edit::Value> {
+    match path {
+        [] => None,
+        [key] => table.remove(key)?.into_value().ok(),
+        [first, rest @ ..] => {
+            let sub = table.get_mut(first)?.as_table_mut()?;
+            let value = take(sub, rest);
+            if sub.is_empty() {
+                table.remove(first);
+            }
+            value
+        }
+    }
+}
+
+/* Makes `doc` hold what `fixed` holds while keeping its comments and order. Keys it
+ * lacks come from `default`, with their comments. */
+fn apply(doc: &mut toml_edit::Table, fixed: &Table, default: &toml_edit::Table) {
+    let gone: Vec<String> = doc
+        .iter()
+        .map(|(k, _)| k.to_owned())
+        .filter(|k| !fixed.contains_key(k))
+        .collect();
+    for key in gone {
+        doc.remove(&key);
+    }
+
+    let empty = toml_edit::Table::new();
+    for (key, value) in fixed {
+        if !doc.contains_key(key) {
+            match default.get_key_value(key) {
+                Some((k, item)) => {
+                    doc.insert_formatted(k, item.clone());
+                }
+                None => {
+                    doc.insert(key, toml_edit::Item::None);
+                }
+            }
+        }
+        let default_sub = default
+            .get(key)
+            .and_then(|i| i.as_table())
+            .unwrap_or(&empty);
+        let item = &mut doc[key.as_str()];
+        match (item.as_table_mut(), value) {
+            (Some(sub), Value::Table(fixed_sub)) => apply(sub, fixed_sub, default_sub),
+            _ => {
+                let current = item.as_value().map(|v| {
+                    let mut v = v.clone();
+                    v.decor_mut().clear();
+                    v.to_string()
+                });
+                if current.as_deref() != Some(value.to_string().as_str()) {
+                    if let Ok(new) = value.to_string().parse::<toml_edit::Value>() {
+                        let decor = item.as_value().map(|v| v.decor().clone());
+                        let mut new = new;
+                        if let Some(decor) = decor {
+                            *new.decor_mut() = decor;
+                        }
+                        *item = toml_edit::Item::Value(new);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn is_number(value: &Value) -> bool {
+    matches!(value, Value::Integer(_) | Value::Float(_))
+}
+
 pub fn config_load_or_create() -> Result<Config, String> {
     let config = config_folder()?.join("config.toml");
 
@@ -296,29 +421,10 @@ pub fn config_load_or_create() -> Result<Config, String> {
         config_content = std::fs::read_to_string(config.as_path())
             .map_err(|x| format!("Could not open and read config file: {}", x))?;
 
-        /* Remove old config variables, add new defaults if not existant */
-        let mut current_config_toml = config_content
-            .parse::<Table>()
-            .map_err(|x| format!("Could not parse config contents as TOML: {}", x))?;
-        let default_config_toml = DEFAULT_CONFIG.parse::<Table>().map_err(|x| {
-            format!("Could not parse default config contents as TOML: {}", x)
-        })?;
-
-        /* Check if the current config has been fixed, and if so just rewrite the old one */
-        if fix_config_toml(&mut current_config_toml, &default_config_toml)? {
-            let fixed_config_content = toml::to_string_pretty(&current_config_toml)
-                .map_err(|x| format!("Could not serialize toml to string: {}", x))?;
-
-            std::fs::write(config.as_path(), fixed_config_content.as_bytes()).map_err(
-                |x| {
-                    format!(
-                        "Could not open and write fixed config to config file: {}",
-                        x
-                    )
-                },
-            )?;
-
-            config_content = fixed_config_content;
+        if let Some(fixed) = upgrade(&config_content)? {
+            std::fs::write(config.as_path(), fixed.as_bytes())
+                .map_err(|x| format!("Could not write the updated config: {}", x))?;
+            config_content = fixed;
         }
     }
 
@@ -326,21 +432,16 @@ pub fn config_load_or_create() -> Result<Config, String> {
         .map_err(|x| format!("Could not parse config file: {}", x))?;
 
     /* ========================== Check constant constraints ========================= */
-    if config_parsed.viewer.render_precision <= 0.0f64 {
-        return Err(
-            "`config.viewer.render_precision` can not be negative or equal to 0!"
-                .to_string(),
-        );
-    }
-
-    if config_parsed.viewer.scale_min <= 0.0f32 {
-        return Err(
-            "`config.viewer.scale_min` can not be negative or equal to 0!".to_string(),
-        );
-    }
-
-    if config_parsed.viewer.margin_bottom < 0.0f32 {
-        return Err("`config.viewer.margin_bottom` can not be negative!".to_string());
+    let viewer = &config_parsed.viewer;
+    for (name, ok) in [
+        ("scroll_step", viewer.scroll_step > 0.0),
+        ("zoom_step", viewer.zoom_step > 0.0),
+        ("sharpness", viewer.sharpness > 0.0),
+        ("page_gap", viewer.page_gap >= 0.0),
+    ] {
+        if !ok {
+            return Err(format!("`viewer.{}` must be more than 0", name));
+        }
     }
 
     if config_parsed.bindings.is_none() {
@@ -1691,5 +1792,81 @@ mod tests {
         assert_eq!(bindings["Ctrl+x"].as_str(), Some("ToggleInverse"));
         assert_eq!(bindings["Ctrl+o"].as_str(), Some("Quit"));
         assert!(!bindings.contains_key("Ctrl+r"));
+    }
+
+    const OLD_CONFIG: &str = r#"# my settings
+[viewer]
+# fast
+scroll_speed = 35.0
+render_precision = 2.0
+memory_limit = 314572800
+scale_min = 0.2
+scale_amount = 0.5
+margin_bottom = 4.0
+pages_preloaded = 3
+inverse_scroll = true
+
+[viewer.uri_hint]
+enabled = false
+
+[state]
+enabled = true
+
+[bindings]
+# quit fast
+"q" = "Quit"
+"#;
+
+    #[test]
+    fn upgrading_keeps_values_and_comments() {
+        let new = upgrade(OLD_CONFIG).unwrap().expect("an old config changes");
+        for kept in [
+            "# my settings",
+            "# quit fast",
+            /* A renamed setting comes with its new explanation */
+            "# How far one step of j, k, the arrows or the mouse wheel moves\nscroll_step",
+            "scroll_step = 35.0",
+            "sharpness = 2.0",
+            "page_gap = 4.0",
+            "invert_wheel = true",
+            "link_hints = false",
+            "remember_position = true",
+            "# How much + and - zoom, in percent of the page width\nzoom_step = 10",
+        ] {
+            assert!(new.contains(kept), "{:?} missing from\n{}", kept, new);
+        }
+        for gone in [
+            "memory_limit",
+            "scale_min",
+            "scale_amount",
+            "pages_preloaded",
+            "uri_hint",
+            "[state]",
+        ] {
+            assert!(!new.contains(gone), "{:?} left in\n{}", gone, new);
+        }
+        let config: Config = toml::from_str(&new).unwrap();
+        assert_eq!(config.viewer.scroll_step, 35.0);
+        assert!(!config.viewer.link_hints);
+        assert_eq!(
+            upgrade(&new).unwrap(),
+            None,
+            "a second upgrade changes nothing"
+        );
+    }
+
+    #[test]
+    fn the_default_config_needs_no_upgrade() {
+        assert_eq!(upgrade(DEFAULT_CONFIG).unwrap(), None);
+        let config: Config = toml::from_str(DEFAULT_CONFIG).unwrap();
+        assert_eq!(config.viewer.zoom_step, 10.0);
+    }
+
+    #[test]
+    fn whole_numbers_are_fine_where_fractions_are_expected() {
+        let text = DEFAULT_CONFIG.replace("sharpness = 1.5", "sharpness = 2");
+        assert_eq!(upgrade(&text).unwrap(), None);
+        let config: Config = toml::from_str(&text).unwrap();
+        assert_eq!(config.viewer.sharpness, 2.0);
     }
 }

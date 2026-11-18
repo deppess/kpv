@@ -97,8 +97,8 @@ impl<'a> RendererInnerState<'a> {
             inverse: false,
             cs: Colorspace::device_rgb(),
             ctm: Matrix::new_scale(
-                config.viewer.render_precision as f32,
-                config.viewer.render_precision as f32,
+                config.viewer.sharpness as f32,
+                config.viewer.sharpness as f32,
             ),
         };
 
@@ -140,7 +140,7 @@ impl<'a> RendererInnerState<'a> {
             cumulative_heights.push(
                 cumulative_heights.last().unwrap_or(&0.0f32)
                     + height
-                    + self.config.viewer.margin_bottom,
+                    + self.config.viewer.page_gap,
             );
             widths.push(width);
             links.push(
@@ -210,7 +210,7 @@ impl RendererInnerState<'_> {
             page_color(Slot::PagesCurrentMatch, [255, 120, 0], STRENGTH),
         );
 
-        let scale = self.config.viewer.render_precision as f32;
+        let scale = self.config.viewer.sharpness as f32;
         let (origin_x, origin_y) = (pixmap.x(), pixmap.y());
         let (width, height) = (pixmap.width() as i32, pixmap.height() as i32);
         let n = pixmap.n() as usize;

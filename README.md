@@ -60,7 +60,7 @@ Page numbers follow the book. When the PDF carries printed page numbers (roman n
 
 Each file opens where you left it: the same page, the same spot on it and the same zoom, along with its marks and page offset. The position is written two seconds after the view stops moving, on quitting, and when the terminal window closes or viewmer is stopped with `kill`. A position is kept per page rather than in pixels, so it comes back right in a window of another size.
 
-Each file gets one small TOML file under `~/Library/Application Support/viewmer/state/` (macOS) or `~/.local/state/viewmer/` (Linux). A file is found by the permanent ID inside the PDF, so moving or renaming it keeps its place, and by its path, for PDFs without an ID and for LaTeX output that gets a new one on every build. Files are replaced in one step, so a crash or two viewers on one file never leave a broken one, and a broken or unknown file is ignored. `[state] enabled = false` turns it off.
+Each file gets one small TOML file under `~/Library/Application Support/viewmer/state/` (macOS) or `~/.local/state/viewmer/` (Linux). A file is found by the permanent ID inside the PDF, so moving or renaming it keeps its place, and by its path, for PDFs without an ID and for LaTeX output that gets a new one on every build. Files are replaced in one step, so a crash or two viewers on one file never leave a broken one, and a broken or unknown file is ignored. `remember_position = false` turns it off.
 
 ## Table of contents
 
@@ -85,12 +85,12 @@ Search ignores case. All matches are highlighted in yellow, the current one in o
 
 ## Configuration
 
-The config is created on first run at `~/Library/Application Support/viewmer/config.toml` (macOS) or `~/.config/viewmer/config.toml` (Linux). New settings and keys from later versions are added to it automatically. A key whose default moved, such as `Ctrl-o` going from inverting colors to jumping back, moves along when the config still has it as shipped; a key you changed stays as you set it.
+The config is created on first run at `~/Library/Application Support/viewmer/config.toml` (macOS) or `~/.config/viewmer/config.toml` (Linux), with a line about each setting:
 
-- `[viewer]`: scroll speed, render precision, memory limit, zoom step and minimum, page gap, preloaded pages, scroll direction.
-- `[viewer.uri_hint]`: `enabled` shows where a hovered link points.
-- `[state]`: `enabled` remembers the position and marks of every file.
+- `[viewer]`: `scroll_step`, `zoom_step` (percent of the page width), `sharpness` (how finely pages are drawn), `page_gap`, `invert_wheel`, `link_hints` (where a hovered link points) and `remember_position`.
 - `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `SetMark`, `GoToMark`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `HalfPageDown`, `HalfPageUp`, `ZoomIn`, `ZoomOut`, `FitWidth`, `FitPage`, `CenterViewer`, `ToggleRuler`, `ToggleInverse`, `ToggleAlpha`, `ShowHelp` and `Quit`.
+
+A config from an older version is brought up to date when viewmer starts: renamed settings keep their values under the new names, settings that are gone are removed, new ones come in with their explanation, and your own comments and order stay. A key whose default moved, such as `Ctrl-o` going from inverting colors to jumping back, moves along when the config still has it as shipped; a key you changed stays as you set it.
 
 ## Colors
 
@@ -124,7 +124,7 @@ cargo clippy --all-features -- -D clippy::all
 cargo test --all-features -- --test-threads 1
 ```
 
-The tests cover the page placement and clipping math, which images a frame places again, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, moving retired default keys, key and prompt handling, search stepping, the help list, reading colors and the theme file, the config merge, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
+The tests cover the page placement and clipping math, which images a frame places again, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, moving retired default keys, key and prompt handling, search stepping, the help list, reading colors and the theme file, the config merge and upgrade, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
 
 ## License
 

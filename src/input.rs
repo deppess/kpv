@@ -121,7 +121,7 @@ pub fn handle_key(
     let count = app.count.take();
     let times = count.unwrap_or(1);
     let config = CONFIG.get().unwrap();
-    let speed = config.viewer.scroll_speed * times as f32;
+    let speed = config.viewer.scroll_step * times as f32;
 
     match action {
         ConfigAction::MoveUp | ConfigAction::MoveDown if app.ruler.is_some() => {
@@ -185,8 +185,8 @@ pub fn handle_key(
         ConfigAction::HalfPageUp => viewer.scroll_screens(-0.5 * times as f32),
         ConfigAction::FitWidth => viewer.set_zoom(1.0),
         ConfigAction::FitPage => viewer.fit_page(),
-        ConfigAction::ZoomIn => viewer.scale(config.viewer.scale_amount * times as f32),
-        ConfigAction::ZoomOut => viewer.scale(-config.viewer.scale_amount * times as f32),
+        ConfigAction::ZoomIn => viewer.zoom_by(config.viewer.zoom_step * times as f32),
+        ConfigAction::ZoomOut => viewer.zoom_by(-config.viewer.zoom_step * times as f32),
         ConfigAction::ShowHelp => {
             key_matcher.reset();
             app.mode = Mode::Help { scroll: 0 };
@@ -279,7 +279,7 @@ pub fn handle_mouse_scroll(
         return false;
     }
 
-    let inverse_factor = if config.viewer.inverse_scroll {
+    let inverse_factor = if config.viewer.invert_wheel {
         1.0
     } else {
         -1.0
@@ -287,19 +287,19 @@ pub fn handle_mouse_scroll(
 
     match kind {
         MouseEventKind::ScrollUp => {
-            viewer.scroll((0.0f32, inverse_factor * config.viewer.scroll_speed));
+            viewer.scroll((0.0f32, inverse_factor * config.viewer.scroll_step));
             false
         }
         MouseEventKind::ScrollDown => {
-            viewer.scroll((0.0f32, -inverse_factor * config.viewer.scroll_speed));
+            viewer.scroll((0.0f32, -inverse_factor * config.viewer.scroll_step));
             false
         }
         MouseEventKind::ScrollLeft => {
-            viewer.scroll((-config.viewer.scroll_speed, 0.0f32));
+            viewer.scroll((-config.viewer.scroll_step, 0.0f32));
             false
         }
         MouseEventKind::ScrollRight => {
-            viewer.scroll((config.viewer.scroll_speed, 0.0f32));
+            viewer.scroll((config.viewer.scroll_step, 0.0f32));
             false
         }
         _ => false,
