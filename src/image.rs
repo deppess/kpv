@@ -2,9 +2,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{
     drivers::graphics::*,
+    globals::IMAGE_PADDING,
     ui::{viewport, Viewport},
     viewer::DisplayRect,
-    IMAGE_PADDING,
 };
 
 use mupdf::Pixmap;

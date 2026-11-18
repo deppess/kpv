@@ -9,7 +9,7 @@ use crossterm::{
     },
 };
 
-use crate::TERMINAL_SIZE;
+use crate::globals::TERMINAL_SIZE;
 
 /* The area inside the border where pages are drawn. Positions are 0-indexed cells,
  * sizes in cells and in pixels. */

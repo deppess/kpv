@@ -8,7 +8,10 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use crossterm::event::MouseEvent;
 use mupdf::{link::LinkDestination, DestinationKind, Link};
 
-use crate::{jumps::Spot, labels, threads::renderer::*, ui::viewport, Image, CONFIG};
+use crate::{
+    globals::CONFIG, image::Image, jumps::Spot, labels, threads::renderer::*,
+    ui::viewport,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct DisplayRect {

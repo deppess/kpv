@@ -9,7 +9,7 @@ use std::{
 use mupdf::{pdf::PdfDocument, Document};
 use serde::{Deserialize, Serialize};
 
-use crate::{jumps::Spot, CONFIG_FILENAME};
+use crate::{globals::CONFIG_FILENAME, jumps::Spot};
 
 const VERSION: u32 = 1;
 

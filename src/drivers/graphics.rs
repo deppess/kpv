@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{RECEIVER_GR, SOFTWARE_ID};
+use crate::globals::{RECEIVER_GR, SOFTWARE_ID};
 
 /* Should be executed only after uncooking the terminal. This method expects the
  * terminal that a non-blocking and unbuffered read from stdin is possible */

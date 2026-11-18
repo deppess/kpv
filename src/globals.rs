@@ -1,4 +1,4 @@
-use crate::{drivers::graphics::GraphicsResponse, Config};
+use crate::{config::Config, drivers::graphics::GraphicsResponse};
 use crossbeam_channel::Receiver;
 use crossterm::terminal::WindowSize;
 use std::sync::{atomic::AtomicBool, Mutex, OnceLock, RwLock};

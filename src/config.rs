@@ -9,7 +9,7 @@ use dirs::config_dir;
 use keybinds::Keybinds;
 use serde::Deserialize;
 
-use crate::{CONFIG_FILENAME, DEFAULT_CONFIG};
+use crate::globals::{CONFIG_FILENAME, DEFAULT_CONFIG};
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
