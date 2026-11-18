@@ -120,6 +120,6 @@ The tests cover the page placement and clipping math, reading printed page numbe
 
 ## License
 
-MIT, inherited from MeowPDF. See [LICENSE](LICENSE). Rendering uses MuPDF, which is AGPL-3.0, so a built binary is subject to its terms.
+PolyForm Strict License 1.0.0 (`SPDX-License-Identifier: PolyForm-Strict-1.0.0`). See [LICENSE](LICENSE). The code inherited from MeowPDF stays under its MIT license, kept in [LICENSE-MeowPDF](LICENSE-MeowPDF). Rendering uses MuPDF, which is AGPL-3.0, so a built binary is subject to its terms.
 
 I ask that this code not be used to train AI models. This is a request, not a license term.
