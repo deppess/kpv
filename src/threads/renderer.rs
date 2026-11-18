@@ -5,24 +5,35 @@ use std::{
 };
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
-use mupdf::{Colorspace, Document, Link, Matrix, MetadataName, Page, Quad};
+use mupdf::{
+    Colorspace, Device, Document, Link, Matrix, MetadataName, Page, Pixmap, Quad,
+};
 
 use crate::{
     config::Config,
     drivers::priority_channel::{unbounded_priority, PriorityReceiver, PrioritySender},
     globals::{CONFIG, RENDER_SCALE, RUNNING},
-    image::{invert_pixels, Image},
+    image::{invert_pixels, Image, Region},
     labels,
     outline::{self, OutlineEntry},
     store,
     theme::{paint, Slot},
 };
 
+/* A page to render: the part `region` of it at `scale` pixels per page unit, with at
+ * most `max_pixels`, coarser if it would take more */
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Request {
+    pub page: usize,
+    pub scale: f32,
+    pub region: Region,
+    pub max_pixels: f32,
+}
+
 #[derive(Clone, PartialEq)]
 pub enum RendererAction {
     Load,
-    /* A page at a scale, in pixels per page unit */
-    Display(usize, f32),
+    Display(Request),
     ToggleInverse,
     ToggleAlpha,
     Search(String),
@@ -181,6 +192,46 @@ impl<'a> RendererInnerState<'a> {
 }
 
 impl RendererInnerState<'_> {
+    /* Draws the part of a page a request asks for. Returns the bitmap, the scale it was
+     * drawn at, and the part of the page it covers, snapped to whole pixels. */
+    fn render(&self, request: &Request) -> Option<(Pixmap, f32, Region)> {
+        let page = self.cache.get(request.page)?;
+        let bounds = page.bounds().ok()?;
+        let [x0, y0, x1, y1] = request.region;
+        let area = ((x1 - x0) * (y1 - y0)).max(1.0);
+        let scale = request
+            .scale
+            .min((request.max_pixels / area).sqrt())
+            .max(1e-3);
+
+        /* The part in device pixels, where the page's own origin can be anywhere */
+        let px = |v: f32, origin: f32| (origin + v) * scale;
+        let left = px(x0, bounds.x0).floor() as i32;
+        let top = px(y0, bounds.y0).floor() as i32;
+        let right = (px(x1, bounds.x0).ceil() as i32).max(left + 1);
+        let bottom = (px(y1, bounds.y0).ceil() as i32).max(top + 1);
+        let mut pixmap =
+            Pixmap::new(&self.cs, left, top, right - left, bottom - top, self.alpha)
+                .ok()?;
+        if self.alpha {
+            pixmap.clear().ok()?;
+        } else {
+            pixmap.clear_with(255).ok()?;
+        }
+        {
+            let device = Device::from_pixmap(&pixmap).ok()?;
+            page.run(&device, &Matrix::new_scale(scale, scale)).ok()?;
+        }
+        let unit = |v: i32, origin: f32| v as f32 / scale - origin;
+        let region = [
+            unit(left, bounds.x0),
+            unit(top, bounds.y0),
+            unit(right, bounds.x0),
+            unit(bottom, bounds.y0),
+        ];
+        Some((pixmap, scale, region))
+    }
+
     pub fn search(&mut self, needle: &str) -> Vec<SearchMatch> {
         const MAX_HITS_PER_PAGE: u32 = 500;
 
@@ -255,9 +306,6 @@ pub fn page_color(slot: Slot, fallback: [u8; 3], strength: u8) -> ([u8; 3], u8) 
     let p = paint(slot);
     (p.rgb().unwrap_or(fallback), p.alpha().unwrap_or(strength))
 }
-
-/* The most pixels a page image may have: about 96 MB */
-const MAX_PIXELS: f32 = 24_000_000.0;
 
 /* Clear pixels around a page image: two cells, so that while a page waits for its
  * image at a new zoom, the old one can still be cut at whole cells */
@@ -393,10 +441,11 @@ impl Renderer {
                         state.current_hit = None;
                         priority_server_receiver.clear_priority(1);
                     }
-                    RendererAction::Display(page, scale) => {
+                    RendererAction::Display(request) => {
+                        let page = request.page;
                         /* A newer zoom asked for this page at another scale */
                         let wanted = f32::from_bits(RENDER_SCALE.load(Ordering::Acquire));
-                        if (scale - wanted).abs() > wanted * 1e-3 {
+                        if (request.scale - wanted).abs() > wanted * 1e-3 {
                             continue;
                         }
                         if state.cache.get(page).is_none() {
@@ -413,22 +462,9 @@ impl Renderer {
                             continue;
                         }
 
-                        /* At most so many pixels, so that a deep zoom can't fill
-                         * the memory kitty keeps for images */
-                        let render = match state.cache[page].bounds() {
-                            Ok(b) => {
-                                let area = (b.width() * b.height()).max(1.0);
-                                scale.min((MAX_PIXELS / area).sqrt())
-                            }
-                            Err(_) => scale,
-                        };
                         /* A page that can't be drawn stays blank */
-                        let Ok(mut pixmap) = state.cache[page].to_pixmap(
-                            &Matrix::new_scale(render, render),
-                            &state.cs,
-                            state.alpha,
-                            false,
-                        ) else {
+                        let Some((mut pixmap, render, region)) = state.render(&request)
+                        else {
                             continue;
                         };
                         if state.inverse {
@@ -437,7 +473,13 @@ impl Renderer {
                         }
                         state.highlight(page, &mut pixmap, render);
 
-                        let Ok(image) = Image::new(&pixmap, padding(), scale) else {
+                        let Ok(image) = Image::new(
+                            &pixmap,
+                            padding(),
+                            request.scale,
+                            region,
+                            request.max_pixels,
+                        ) else {
                             continue;
                         };
                         result_server_sender

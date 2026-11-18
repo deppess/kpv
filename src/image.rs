@@ -9,8 +9,20 @@ use crate::{
 
 use mupdf::Pixmap;
 
-/* A page image that kitty holds. Only its size is kept here; if kitty loses it, the
- * page is rendered again. */
+/* A part of a page in page units from its top-left corner: x0, y0, x1, y1 */
+pub type Region = [f32; 4];
+
+/* Whether `outer` covers `inner`, give or take half a page unit */
+pub fn covers(outer: Region, inner: Region) -> bool {
+    const SLACK: f32 = 0.5;
+    outer[0] <= inner[0] + SLACK
+        && outer[1] <= inner[1] + SLACK
+        && outer[2] >= inner[2] - SLACK
+        && outer[3] >= inner[3] - SLACK
+}
+
+/* A page image that kitty holds: all of a page or a part of it. Only its size is
+ * kept here; if kitty loses it, the page is rendered again. */
 pub struct Image {
     id: usize,
     /* The bitmap's size without its padding */
@@ -19,13 +31,25 @@ pub struct Image {
     padding: usize,
     /* The scale it was asked for, in pixels per page unit */
     scale: f32,
+    /* The part of the page it shows */
+    region: Region,
+    /* The most pixels it was allowed; fewer than its region at its scale means it was
+     * drawn coarser, to stand in until the page is in view */
+    max_pixels: f32,
     /* Bytes kitty keeps for it */
     bytes: usize,
 }
 
 impl Image {
-    /* Sends `pixmap`, rendered for `scale`, to kitty with `padding` clear pixels around */
-    pub fn new(pixmap: &Pixmap, padding: usize, scale: f32) -> Result<Self, String> {
+    /* Sends `pixmap`, the part `region` of a page rendered for `scale` with at most
+     * `max_pixels`, to kitty with `padding` clear pixels around */
+    pub fn new(
+        pixmap: &Pixmap,
+        padding: usize,
+        scale: f32,
+        region: Region,
+        max_pixels: f32,
+    ) -> Result<Self, String> {
         static ID: AtomicUsize = AtomicUsize::new(1);
 
         let (width, height) = (pixmap.width() as usize, pixmap.height() as usize);
@@ -43,8 +67,18 @@ impl Image {
             dimensions: (width as i32, height as i32),
             padding,
             scale,
+            region,
+            max_pixels,
             bytes: data.len(),
         })
+    }
+
+    pub fn region(&self) -> Region {
+        self.region
+    }
+
+    pub fn max_pixels(&self) -> f32 {
+        self.max_pixels
     }
 
     pub fn id(&self) -> usize {
@@ -59,10 +93,17 @@ impl Image {
         self.scale
     }
 
-    /* Where the image goes to show a page at `rect`; `None` when that is outside the
-     * viewport */
-    pub fn placement(&self, rect: DisplayRect) -> Option<Placement> {
-        placement(rect, self.dimensions, self.padding as f64, &viewport())
+    /* Where the image goes to show a page drawn at `rect` with `view_scale` viewport
+     * pixels per page unit; `None` when its part of the page is outside the viewport */
+    pub fn placement(&self, rect: DisplayRect, view_scale: f32) -> Option<Placement> {
+        let [x0, y0, x1, y1] = self.region;
+        let part = DisplayRect {
+            x: rect.x + (x0 * view_scale).round() as i32,
+            y: rect.y + (y0 * view_scale).round() as i32,
+            width: ((x1 - x0) * view_scale).round() as i32,
+            height: ((y1 - y0) * view_scale).round() as i32,
+        };
+        placement(part, self.dimensions, self.padding as f64, &viewport())
     }
 }
 

@@ -1,6 +1,6 @@
 use core::f32;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{atomic::Ordering, Arc, RwLock},
 };
 
@@ -10,7 +10,7 @@ use mupdf::{link::LinkDestination, DestinationKind, Link};
 
 use crate::{
     globals::{CONFIG, RENDER_SCALE},
-    image::{Image, PagePlacement},
+    image::{covers, Image, PagePlacement, Region},
     jumps::Spot,
     labels,
     threads::renderer::*,
@@ -151,8 +151,10 @@ pub struct Viewer {
 
     pub images: HashMap<usize, Arc<RwLock<Image>>>,
     invalidated: HashMap<usize, ()>,
-    /* Pages asked for and the scale they were asked at */
-    scheduled4render: HashMap<usize, f32>,
+    /* What was last asked of the renderer for each page */
+    scheduled4render: HashMap<usize, Request>,
+    /* The pages the last frame wanted, which are never dropped to make room */
+    wanted: HashSet<usize>,
     memory_used: usize,
     last_rendered: VecDeque<usize>,
     /* Failed placements in a row, per page */
@@ -181,6 +183,7 @@ impl Viewer {
                 images: HashMap::new(),
                 invalidated: HashMap::new(),
                 scheduled4render: HashMap::new(),
+                wanted: HashSet::new(),
                 memory_used: 0,
                 last_rendered: VecDeque::new(),
                 failures: HashMap::new(),
@@ -360,8 +363,11 @@ impl Viewer {
         }
     }
 
+    /* Moves the view by `amount` page units: right and down for positive values. The
+     * horizontal offset is where the page's left edge is, in pixels, so it moves the
+     * other way. */
     pub fn scroll(&mut self, amount: (f32, f32)) {
-        self.offset.0 += amount.0;
+        self.offset.0 -= amount.0 * self.scale;
         self.offset.1 += amount.1;
         self.bound_viewer();
     }
@@ -635,25 +641,32 @@ impl Viewer {
         self.memory_used += image.read().unwrap().size();
         self.last_rendered.push_back(page);
 
-        /* An image for an older zoom stands in, but the request for the new one stays */
-        let scale = image.read().unwrap().scale();
-        if self
-            .scheduled4render
-            .get(&page)
-            .is_some_and(|asked| same_scale(*asked, scale))
-        {
+        /* An image for an older request stands in, but the newer request stays */
+        let (scale, region) = {
+            let image = image.read().unwrap();
+            (image.scale(), image.region())
+        };
+        if self.scheduled4render.get(&page).is_some_and(|asked| {
+            same_scale(asked.scale, scale) && covers(region, asked.region)
+        }) {
             self.scheduled4render.remove(&page);
         }
         self.images.insert(page, image);
         self.failures.remove(&page);
 
+        /* The oldest images go first. A page rendered again is in the queue more than
+         * once and stays while a newer entry stands for it. Pages on screen or kept
+         * ready stay too: dropping them would only have them rendered again. */
         while self.memory_used >= MEMORY_LIMIT {
-            let Some(oldest) = self.last_rendered.pop_front() else {
+            let Some(i) = self
+                .last_rendered
+                .iter()
+                .position(|p| *p != page && !self.wanted.contains(p))
+            else {
                 break;
             };
-            /* A page rendered again is in the queue more than once; keep it while a
-             * newer entry still stands for it */
-            if oldest != page && !self.last_rendered.contains(&oldest) {
+            let oldest = self.last_rendered.remove(i).unwrap_or(page);
+            if !self.last_rendered.contains(&oldest) {
                 self.remove_image(oldest);
             }
         }
@@ -667,9 +680,10 @@ impl Viewer {
         self.invalidated.remove(&page);
     }
 
-    /* Asks the renderer for the page when its image is missing or out of date, and
-     * plans its image: at `rect`, or with `None` kept ready out of sight. Until a new
-     * image arrives the old one stands in, so a page never flashes blank. */
+    /* Asks the renderer for the page when its image is missing, out of date, or
+     * doesn't cover the part in view sharply, and plans its image: at `rect`, or with
+     * `None` kept ready out of sight. Until a new image arrives the old one stands in,
+     * so a page never flashes blank. */
     fn plan_page(
         &mut self,
         page: usize,
@@ -677,29 +691,54 @@ impl Viewer {
         renderer: &Renderer,
     ) -> Option<PagePlacement> {
         let scale = self.render_scale();
+        let size = (
+            self.page_width(page).unwrap_or(0.0),
+            (self.page_height(page).unwrap_or(0.0)
+                - CONFIG.get().unwrap().viewer.page_gap)
+                .max(0.0),
+        );
+        let vp = viewport();
+        let want = wanted(size, rect, self.scale, (vp.width(), vp.height()), scale);
+
+        /* An image that covers what would be asked for now is always enough, so a
+         * page is never asked for over and over */
+        let enough = |region: Region, max_pixels: f32, asked_scale: f32| {
+            same_scale(asked_scale, scale)
+                && want.need.is_none_or(|need| {
+                    max_pixels >= want.max_pixels
+                        && (covers(region, need) || covers(region, want.region))
+                })
+        };
         let stale = match self.images.get(&page) {
             None => true,
             Some(image) => {
+                let image = image.read().unwrap();
                 self.invalidated.contains_key(&page)
-                    || !same_scale(image.read().unwrap().scale(), scale)
+                    || !enough(image.region(), image.max_pixels(), image.scale())
             }
         };
         let asked = self
             .scheduled4render
             .get(&page)
-            .is_some_and(|asked| same_scale(*asked, scale));
+            .is_some_and(|r| enough(r.region, r.max_pixels, r.scale));
+        let request = Request {
+            page,
+            scale,
+            region: want.region,
+            max_pixels: want.max_pixels,
+        };
         if stale
             && !asked
             && renderer
-                .send_action(RendererAction::Display(page, scale))
+                .send_action(RendererAction::Display(request))
                 .is_ok()
         {
-            self.scheduled4render.insert(page, scale);
+            self.scheduled4render.insert(page, request);
         }
 
         let image = self.images.get(&page)?.read().unwrap();
         let at = match rect {
-            Some(rect) => Some(image.placement(rect)?),
+            Some(rect) => Some(image.placement(rect, self.scale)?),
             None => None,
         };
         Some(PagePlacement {
@@ -736,6 +775,7 @@ impl Viewer {
             page_index += 1;
         }
 
+        self.wanted = plan.iter().map(|p| p.page).collect();
         plan
     }
 
@@ -763,6 +803,80 @@ impl Viewer {
     }
 }
 
+/* A page with at most this many pixels at the scale in use is rendered whole */
+const WHOLE_PIXELS: f32 = 12_000_000.0;
+/* Past that, the part in view and a margin around it, up to this many */
+const REGION_PIXELS: f32 = 16_000_000.0;
+/* and pages out of view whole but coarser, standing in until they come into view */
+const STAND_IN_PIXELS: f32 = 4_000_000.0;
+/* The margin, as a share of the viewport on each side */
+const MARGIN: f32 = 0.5;
+
+/* What to render of a page */
+#[derive(Debug, PartialEq)]
+pub struct Want {
+    pub region: Region,
+    pub max_pixels: f32,
+    /* The part in view, which an image must cover sharply; `None` out of view */
+    pub need: Option<Region>,
+}
+
+/* What to render of a page `size` page units big that is drawn at `rect` (`None` when
+ * it's out of view) with `view_scale` pixels per unit in a viewport `vp` pixels big,
+ * rendering at `scale`. A page that fits a whole image is rendered whole; a bigger one
+ * is rendered sharp only around the part in view, and coarse while out of view, which
+ * keeps every image within what kitty holds at any zoom. */
+pub fn wanted(
+    size: (f32, f32),
+    rect: Option<DisplayRect>,
+    view_scale: f32,
+    vp: (f32, f32),
+    scale: f32,
+) -> Want {
+    let (w, h) = size;
+    let whole = [0.0, 0.0, w, h];
+    /* The part in view, if any of the page is: its edge can sit just outside */
+    let need = rect.and_then(|r| {
+        let x0 = ((-r.x as f32) / view_scale).clamp(0.0, w);
+        let y0 = ((-r.y as f32) / view_scale).clamp(0.0, h);
+        let x1 = ((vp.0 - r.x as f32) / view_scale).clamp(x0, w);
+        let y1 = ((vp.1 - r.y as f32) / view_scale).clamp(y0, h);
+        (x1 - x0 >= 0.5 && y1 - y0 >= 0.5).then_some([x0, y0, x1, y1])
+    });
+    let pixels = |r: Region| (r[2] - r[0]) * (r[3] - r[1]) * scale * scale;
+    if pixels(whole) <= WHOLE_PIXELS {
+        return Want {
+            region: whole,
+            max_pixels: WHOLE_PIXELS,
+            need,
+        };
+    }
+    let Some(need) = need else {
+        return Want {
+            region: whole,
+            max_pixels: STAND_IN_PIXELS,
+            need: None,
+        };
+    };
+    let (mx, my) = (vp.0 * MARGIN / view_scale, vp.1 * MARGIN / view_scale);
+    let around = [
+        (need[0] - mx).max(0.0),
+        (need[1] - my).max(0.0),
+        (need[2] + mx).min(w),
+        (need[3] + my).min(h),
+    ];
+    let region = if pixels(around) <= REGION_PIXELS {
+        around
+    } else {
+        need
+    };
+    Want {
+        region,
+        max_pixels: REGION_PIXELS,
+        need: Some(need),
+    }
+}
+
 /* Two scales are the same when they'd give the same pixels */
 fn same_scale(a: f32, b: f32) -> bool {
     (a - b).abs() <= b.abs() * 1e-3
@@ -771,6 +885,69 @@ fn same_scale(a: f32, b: f32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at(x: i32, y: i32, width: i32, height: i32) -> Option<DisplayRect> {
+        Some(DisplayRect {
+            x,
+            y,
+            width,
+            height,
+        })
+    }
+
+    #[test]
+    fn a_page_that_fits_is_rendered_whole() {
+        /* A letter page at 2 pixels per unit: 1224 x 1584, under the limit */
+        let want = wanted(
+            (612.0, 792.0),
+            at(0, 0, 1224, 1584),
+            2.0,
+            (1224.0, 800.0),
+            2.0,
+        );
+        assert_eq!(want.region, [0.0, 0.0, 612.0, 792.0]);
+        assert_eq!(want.max_pixels, WHOLE_PIXELS);
+        assert_eq!(want.need, Some([0.0, 0.0, 612.0, 400.0]));
+    }
+
+    #[test]
+    fn deep_in_a_page_only_the_part_in_view_is_sharp() {
+        /* At 8 pixels per unit the page would be 31 Mpx; the view shows its middle */
+        let rect = at(-2000, -3000, 4896, 6336);
+        let want = wanted((612.0, 792.0), rect, 8.0, (1600.0, 1000.0), 8.0);
+        let need = want.need.unwrap();
+        assert_eq!(need, [250.0, 375.0, 450.0, 500.0]);
+        assert_eq!(want.max_pixels, REGION_PIXELS);
+        /* Half a viewport of margin on each side */
+        assert_eq!(want.region, [150.0, 312.5, 550.0, 562.5]);
+        let pixels =
+            (want.region[2] - want.region[0]) * (want.region[3] - want.region[1]) * 64.0;
+        assert!(pixels <= REGION_PIXELS);
+    }
+
+    #[test]
+    fn a_big_page_out_of_view_stands_in_coarse() {
+        let want = wanted((612.0, 792.0), None, 8.0, (1600.0, 1000.0), 8.0);
+        assert_eq!(want.region, [0.0, 0.0, 612.0, 792.0]);
+        assert_eq!(want.max_pixels, STAND_IN_PIXELS);
+        assert_eq!(want.need, None);
+    }
+
+    #[test]
+    fn a_page_just_above_the_view_has_nothing_in_view() {
+        /* Its bottom edge ends where the view starts: only the gap below it shows */
+        let rect = at(-1469, -5136, 3919, 5072);
+        let scale = 5072.0 / 792.0;
+        let want = wanted((612.0, 792.0), rect, scale, (980.0, 760.0), scale);
+        assert_eq!(want.need, None);
+        assert_eq!(want.max_pixels, STAND_IN_PIXELS);
+    }
+
+    #[test]
+    fn regions_cover_what_they_should() {
+        assert!(covers([0.0, 0.0, 100.0, 100.0], [10.0, 10.0, 90.0, 100.2]));
+        assert!(!covers([0.0, 0.0, 100.0, 100.0], [10.0, 10.0, 90.0, 120.0]));
+    }
 
     #[test]
     fn destinations_name_their_top_edge() {
