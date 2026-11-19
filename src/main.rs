@@ -226,6 +226,7 @@ fn main() {
         notes: crate::notes::Notes::new(Path::new(&arg)),
         layer: None,
         title: frame_title(None, None, &arg),
+        message_shown: None,
     };
 
     let mut current_mouse = MouseEvent {
@@ -259,10 +260,18 @@ fn main() {
 
         /* Keys go first: a busy renderer or a redraw loop must never make the viewer
          * ignore input, `q` above all */
+        /* Wake up to write the position once the view has stayed put, and to take a
+         * message away once it has been on show for a while */
+        let due = [
+            app.save_due.as_ref().map(|(_, at)| *at),
+            message_due(&mut app),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         let index_ready = if !event_inputs.0.is_empty() {
             4
-        } else if let Some((_, due)) = &app.save_due {
-            /* Wake up to write the position once the view has stayed put */
+        } else if let Some(due) = due {
             sel.ready_timeout(due.saturating_duration_since(Instant::now()))
                 .unwrap_or(SAVE_DUE)
         } else {
@@ -401,8 +410,18 @@ fn main() {
                 }
             },
             SAVE_DUE => {
-                save_state(&mut app);
-                continue 'main;
+                let now = Instant::now();
+                if app.save_due.as_ref().is_some_and(|(_, at)| *at <= now) {
+                    save_state(&mut app);
+                }
+                let shown_long = app
+                    .message_shown
+                    .as_ref()
+                    .is_some_and(|(_, since)| *since + MESSAGE_TIME <= now);
+                if !shown_long {
+                    continue 'main;
+                }
+                app.message = None;
             }
             _ => unreachable!(),
         };

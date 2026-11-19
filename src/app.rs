@@ -68,6 +68,28 @@ pub struct App {
     pub layer: Option<ui::Layer>,
     /* The top edge of the frame: the PDF's title and author, or its file name */
     pub title: String,
+    /* The message on show and since when, so that it goes after a while */
+    pub message_shown: Option<(String, Instant)>,
+}
+
+/* How long a message stays in the status bar */
+pub const MESSAGE_TIME: Duration = Duration::from_secs(5);
+
+/* When the message on show is due to go; a new message starts its time again */
+pub fn message_due(app: &mut App) -> Option<Instant> {
+    match (&app.message, &app.message_shown) {
+        (None, _) => {
+            app.message_shown = None;
+            None
+        }
+        (Some(text), Some((shown, since))) if text == shown => {
+            Some(*since + MESSAGE_TIME)
+        }
+        (Some(text), _) => {
+            app.message_shown = Some((text.clone(), Instant::now()));
+            Some(Instant::now() + MESSAGE_TIME)
+        }
+    }
 }
 
 /* Whether a title stored in a PDF is a real one, not what an export tool left there:
