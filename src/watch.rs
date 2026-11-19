@@ -8,15 +8,15 @@ use std::{
     os::unix::process::ExitStatusExt,
     path::PathBuf,
     process::Command,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+use signal_hook::{
+    consts::{SIGHUP, SIGINT, SIGTERM},
+    iterator::Signals,
+};
 
 use crate::store::Store;
 
@@ -85,6 +85,14 @@ fn now() -> String {
     )
 }
 
+/* The viewer running, and what came for it */
+#[derive(Default)]
+struct Watch {
+    viewer: Option<libc::pid_t>,
+    pending: Option<i32>,
+    hung_up: bool,
+}
+
 /* Runs the viewer under the watcher and exits with it. Returns only when it can't
  * watch, and the viewer should just run. */
 pub fn run(args: &[String], reset_screen: fn()) {
@@ -95,19 +103,27 @@ pub fn run(args: &[String], reset_screen: fn()) {
     let mut saved: libc::termios = unsafe { std::mem::zeroed() };
     let have_saved = unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut saved) } == 0;
 
-    /* The watcher outlives the signals that stop the viewer, and passes them on */
-    let flags: Vec<(i32, Arc<AtomicBool>)> = [SIGHUP, SIGINT, SIGTERM]
-        .into_iter()
-        .map(|sig| (sig, Arc::new(AtomicBool::new(false))))
-        .collect();
-    for (sig, flag) in &flags {
-        if signal_hook::flag::register(*sig, flag.clone()).is_err() {
-            return;
+    /* The watcher outlives the signals that stop the viewer, and passes them on to the
+     * one running; one that comes while none is waits for the next */
+    let Ok(mut signals) = Signals::new([SIGHUP, SIGINT, SIGTERM]) else {
+        return;
+    };
+    let watch = Arc::new(Mutex::new(Watch::default()));
+    let passing = watch.clone();
+    thread::spawn(move || {
+        for sig in signals.forever() {
+            let mut watch = passing.lock().unwrap();
+            watch.hung_up |= sig == SIGHUP;
+            match watch.viewer {
+                Some(pid) => unsafe {
+                    libc::kill(pid, sig);
+                },
+                None => watch.pending = Some(sig),
+            }
         }
-    }
+    });
 
     let mut crashes: Vec<Instant> = Vec::new();
-    let mut hung_up = false;
     loop {
         let mut command = Command::new(&exe);
         command.args(&args[1..]).env(WATCHED, "1");
@@ -118,20 +134,21 @@ pub fn run(args: &[String], reset_screen: fn()) {
             return;
         };
         let pid = child.id() as libc::pid_t;
-
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) => (),
-                Err(_) => std::process::exit(1),
+        {
+            let mut watch = watch.lock().unwrap();
+            watch.viewer = Some(pid);
+            if let Some(sig) = watch.pending.take() {
+                unsafe { libc::kill(pid, sig) };
             }
-            for (sig, flag) in &flags {
-                if flag.swap(false, Ordering::AcqRel) {
-                    hung_up |= *sig == SIGHUP;
-                    unsafe { libc::kill(pid, *sig) };
-                }
-            }
-            thread::sleep(Duration::from_millis(50));
+        }
+        /* Asleep until the viewer ends */
+        let Ok(status) = child.wait() else {
+            std::process::exit(1);
+        };
+        let hung_up = {
+            let mut watch = watch.lock().unwrap();
+            watch.viewer = None;
+            watch.hung_up
         };
 
         let Some(signal) = status.signal() else {
