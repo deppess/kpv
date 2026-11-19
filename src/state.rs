@@ -25,6 +25,9 @@ pub struct SearchState {
     /* Scroll to the first match when the results come. A search run again after the
      * file reloads only refreshes the highlights. */
     pub follow: bool,
+    /* The renderer's search the matches are from, and how far it has got */
+    pub generation: u64,
+    pub searched: (usize, usize),
 }
 
 impl SearchState {
@@ -35,7 +38,29 @@ impl SearchState {
             current: None,
             pending: true,
             follow: true,
+            generation: 0,
+            searched: (0, 0),
         }
+    }
+
+    /* Takes a batch of matches from search `generation`. A newer search starts the
+     * list again and an older one is ignored. `false` when the batch was ignored. */
+    pub fn add(&mut self, generation: u64, matches: Vec<SearchMatch>) -> bool {
+        if generation < self.generation {
+            return false;
+        }
+        if generation > self.generation {
+            self.generation = generation;
+            self.matches.clear();
+        }
+        self.matches.extend(matches);
+        true
+    }
+
+    /* The search is done: picks the first match on or after `page` */
+    pub fn finish(&mut self, page: usize) {
+        let matches = std::mem::take(&mut self.matches);
+        self.set_results(matches, page);
     }
 
     /* Takes the renderer's results and picks the first match on or after `page` */
@@ -68,7 +93,15 @@ impl SearchState {
     /* `/needle 2/7` for the status bar */
     pub fn status(&self) -> String {
         if self.pending {
-            format!("/{} …", self.needle)
+            match self.searched {
+                (searched, total) if total > 0 => format!(
+                    "/{} {} found, {}%",
+                    self.needle,
+                    self.matches.len(),
+                    searched * 100 / total
+                ),
+                _ => format!("/{} …", self.needle),
+            }
         } else {
             match self.current {
                 Some(i) => format!("/{} {}/{}", self.needle, i + 1, self.matches.len()),
@@ -458,6 +491,21 @@ mod tests {
         s.set_results(vec![], 0);
         assert_eq!(s.status(), "/zzz no match");
         assert!(s.step(1).is_none());
+    }
+
+    #[test]
+    fn search_results_come_in_batches_from_the_newest_search() {
+        let mut s = SearchState::new("x".to_owned());
+        assert!(s.add(1, vec![hit(2), hit(5)]));
+        s.searched = (50, 100);
+        assert_eq!(s.status(), "/x 2 found, 50%");
+        /* A newer search starts again; the older one's late batch is left out */
+        assert!(s.add(2, vec![hit(3)]));
+        assert!(!s.add(1, vec![hit(9)]));
+        assert!(s.add(2, vec![hit(7)]));
+        s.finish(4);
+        assert_eq!(s.matches.len(), 2);
+        assert_eq!(s.status(), "/x 2/2");
     }
 
     #[test]

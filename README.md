@@ -99,7 +99,7 @@ The note is saved whenever you leave it: going back to the PDF, hiding it, leavi
 
 ## Search
 
-Search ignores case. All matches are highlighted in yellow, the current one in orange, and the search runs again when the file reloads.
+Search ignores case. It runs alongside the pages, so they keep drawing and scrolling while it does: the status bar counts the matches found so far, the matches are highlighted as they turn up, and once it's done it goes to the first match from where you are. All matches are highlighted in yellow, the current one in orange, and the search runs again when the file reloads.
 
 ## Configuration
 

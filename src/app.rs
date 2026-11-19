@@ -503,9 +503,25 @@ pub fn handle_result(
             viewer.handle_image(page, data);
             false
         }
-        RendererResult::SearchResults { needle, matches } => {
-            if let Some(search) = app.search.as_mut().filter(|s| s.needle == needle) {
-                search.set_results(matches, viewer.page_view());
+        RendererResult::SearchProgress {
+            generation,
+            needle,
+            matches,
+            searched,
+            total,
+        } => {
+            let Some(search) = app.search.as_mut().filter(|s| s.needle == needle) else {
+                return false;
+            };
+            let pages: Vec<usize> = matches.iter().map(|m| m.page).collect();
+            if !search.add(generation, matches) {
+                return false;
+            }
+            search.searched = (searched, total);
+            /* Pages with new matches are drawn again with them highlighted */
+            viewer.invalidate_pages(&pages);
+            if searched >= total {
+                search.finish(viewer.page_view());
                 let follow = search.follow;
                 show_current_match(app, viewer, renderer, follow);
             }

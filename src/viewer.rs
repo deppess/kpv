@@ -359,6 +359,16 @@ impl Viewer {
         labels::status(&self.labels, self.page_view, self.pages())
     }
 
+    /* The images of `pages` are drawn again */
+    pub fn invalidate_pages(&mut self, pages: &[usize]) {
+        for page in pages {
+            if self.images.contains_key(page) {
+                self.invalidated.insert(*page, ());
+                self.scheduled4render.remove(page);
+            }
+        }
+    }
+
     pub fn invalidate_registry(&mut self) {
         self.invalidated.clear();
         self.scheduled4render.clear();

@@ -1,7 +1,11 @@
 use core::f32;
 use std::{
-    sync::{atomic::Ordering, Arc, RwLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, RwLock,
+    },
     thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -71,9 +75,14 @@ pub enum RendererResult {
         page: usize,
         data: Option<Arc<RwLock<Image>>>,
     },
-    SearchResults {
+    /* Matches found since the last batch, by the search `generation`, with how many
+     * of the `total` pages it has searched; it's done when they're all searched */
+    SearchProgress {
+        generation: u64,
         needle: String,
         matches: Vec<SearchMatch>,
+        searched: usize,
+        total: usize,
     },
 }
 
@@ -85,7 +94,10 @@ struct RendererInnerState<'a> {
 
     pub cache: Vec<Page>,
     /* Search hits as (page, rectangle in page coordinates) */
-    pub hits: Vec<(usize, mupdf::Rect)>,
+    /* Shared with the search thread, which adds to them as it finds them */
+    pub hits: Arc<Mutex<Vec<(usize, mupdf::Rect)>>>,
+    /* Counts searches; the running one stops when it changes */
+    search_generation: Arc<AtomicU64>,
     pub current_hit: Option<usize>,
 
     pub alpha: bool,
@@ -105,7 +117,8 @@ impl<'a> RendererInnerState<'a> {
             file,
             document,
             cache: Vec::new(),
-            hits: Vec::new(),
+            hits: Arc::new(Mutex::new(Vec::new())),
+            search_generation: Arc::new(AtomicU64::new(0)),
             current_hit: None,
             alpha: false,
             inverse: false,
@@ -179,7 +192,9 @@ impl<'a> RendererInnerState<'a> {
 
         self.document = document;
         self.cache = cache;
-        self.hits.clear();
+        /* A search of the old version stops; the viewer searches the new one */
+        self.search_generation.fetch_add(1, Ordering::AcqRel);
+        self.hits.lock().unwrap().clear();
         self.current_hit = None;
 
         Ok(RendererResult::PageMetadata {
@@ -237,28 +252,76 @@ impl RendererInnerState<'_> {
         Some((pixmap, scale, region))
     }
 
-    pub fn search(&mut self, needle: &str) -> Vec<SearchMatch> {
+    /* Searches the document on a thread of its own, with its own copy of it, so that
+     * pages go on rendering. Matches go to the viewer a batch at a time and into the
+     * hits painted on pages as they're found; a newer search or a reload stops it. */
+    fn start_search(
+        &mut self,
+        needle: String,
+        results: PrioritySender<RendererResult, 2>,
+    ) {
         const MAX_HITS_PER_PAGE: u32 = 500;
+        const BATCH: Duration = Duration::from_millis(100);
 
-        self.hits.clear();
+        let generation = self.search_generation.fetch_add(1, Ordering::AcqRel) + 1;
         self.current_hit = None;
-        let mut matches = Vec::new();
-        for (index, page) in self.cache.iter().enumerate() {
-            let Ok(bounds) = page.bounds() else { continue };
-            let Ok(quads) = page.search(needle, MAX_HITS_PER_PAGE) else {
-                continue;
+        self.hits.lock().unwrap().clear();
+        let (file, hits, live) = (
+            self.file.clone(),
+            self.hits.clone(),
+            self.search_generation.clone(),
+        );
+        thread::spawn(move || {
+            let is_live = || live.load(Ordering::Acquire) == generation;
+            let send = |matches: Vec<SearchMatch>, searched: usize, total: usize| {
+                let progress = RendererResult::SearchProgress {
+                    generation,
+                    needle: needle.clone(),
+                    matches,
+                    searched,
+                    total,
+                };
+                let _ = results.try_send_priority(progress, 0);
             };
-            for quad in quads.iter() {
-                let rect = quad_bounds(quad);
-                matches.push(SearchMatch {
-                    page: index,
-                    x: rect.x0 - bounds.x0,
-                    y: rect.y0 - bounds.y0,
+            let Ok(document) = Document::open(&file) else {
+                send(Vec::new(), 0, 0);
+                return;
+            };
+            let total = document.page_count().unwrap_or(0).max(0) as usize;
+            let mut batch = Vec::new();
+            let mut sent = Instant::now();
+            for index in 0..total {
+                let found = document.load_page(index as i32).ok().and_then(|page| {
+                    let bounds = page.bounds().ok()?;
+                    let quads = page.search(&needle, MAX_HITS_PER_PAGE).ok()?;
+                    Some((bounds, quads.iter().map(quad_bounds).collect::<Vec<_>>()))
                 });
-                self.hits.push((index, rect));
+                if let Some((bounds, rects)) = found {
+                    let mut shared = hits.lock().unwrap();
+                    if !is_live() {
+                        return;
+                    }
+                    for rect in rects {
+                        batch.push(SearchMatch {
+                            page: index,
+                            x: rect.x0 - bounds.x0,
+                            y: rect.y0 - bounds.y0,
+                        });
+                        shared.push((index, rect));
+                    }
+                }
+                if !is_live() {
+                    return;
+                }
+                if index + 1 == total || sent.elapsed() >= BATCH {
+                    send(std::mem::take(&mut batch), index + 1, total);
+                    sent = Instant::now();
+                }
             }
-        }
-        matches
+            if total == 0 {
+                send(Vec::new(), 0, 0);
+            }
+        });
     }
 
     /* Paints the search hits of `page` onto its bitmap */
@@ -275,7 +338,8 @@ impl RendererInnerState<'_> {
         let n = pixmap.n() as usize;
         let stride = width as usize * n;
 
-        for (i, (_, rect)) in self.hits.iter().enumerate().filter(|(_, h)| h.0 == page) {
+        let hits = self.hits.lock().unwrap();
+        for (i, (_, rect)) in hits.iter().enumerate().filter(|(_, h)| h.0 == page) {
             let ([r, g, b], alpha) = if self.current_hit == Some(i) {
                 current
             } else {
@@ -426,23 +490,16 @@ impl Renderer {
                         priority_server_receiver.clear_priority(1);
                     }
                     RendererAction::Search(needle) => {
-                        let matches = state.search(&needle);
+                        state.start_search(needle, result_server_sender.clone());
                         priority_server_receiver.clear_priority(1);
-                        result_server_sender
-                            .try_send_priority(
-                                RendererResult::SearchResults { needle, matches },
-                                0,
-                            )
-                            .map_err(|x| {
-                                format!("Could not send results to client: {}", x)
-                            })?;
                     }
                     RendererAction::SetCurrentMatch(current) => {
                         state.current_hit = current;
                         priority_server_receiver.clear_priority(1);
                     }
                     RendererAction::ClearSearch => {
-                        state.hits.clear();
+                        state.search_generation.fetch_add(1, Ordering::AcqRel);
+                        state.hits.lock().unwrap().clear();
                         state.current_hit = None;
                         priority_server_receiver.clear_priority(1);
                     }
