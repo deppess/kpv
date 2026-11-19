@@ -53,7 +53,7 @@ Jumps are page jumps (`gg`, `G`, `:`), marks, links, table of contents entries a
 
 A number before a key repeats it: `3 Ctrl-f` moves three pages, and `5j` moves five steps. In a `:` or `/` prompt, `Esc` or backspacing past the start cancels, and `Ctrl-u` clears the line.
 
-Page numbers follow the book. When the PDF carries printed page numbers (roman numerals for the front matter, a restart at chapter one, prefixes like `A-3`), the status bar shows them as `xiv (14/412)`: the printed number, then the position in the file. A `:` number that no page is printed with goes to that position instead, and the status bar says so. For a scan without printed page numbers, `:offset 12` makes the 13th page printed page 1, and `:offset` shows the current offset. Clicking a link opens it, or jumps to the spot it points to when it points into the document.
+Page numbers follow the book. When the PDF carries printed page numbers (roman numerals for the front matter, a restart at chapter one, prefixes like `A-3`), the status bar shows them as `xiv (14/412)`: the printed number, then the position in the file. A `:` number that no page is printed with goes to that position instead, and the status bar says so. A PDF that doesn't say how its pages are numbered is read for the numbers printed in the pages' headers and footers: when enough pages agree, the pages are numbered as printed (the status bar says so), and when they don't, pages go by their place in the file. `:offset 12` sets it by hand, making the 13th page printed page 1, which then stays; `:offset auto` goes back to reading it off the pages, and `:offset` shows the current offset. A page before printed page 1 goes by its place in the file, as `#3`. Clicking a link opens it, or jumps to the spot it points to when it points into the document.
 
 ## Reading ruler
 
@@ -144,7 +144,7 @@ cargo clippy --all-features -- -D clippy::all
 cargo test --all-features -- --test-threads 1
 ```
 
-The tests cover the page placement and clipping math, which images a frame places again, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, moving retired default keys, key and prompt handling, search stepping, the help list, reading colors and the theme file, encoding keys, the mouse and pastes for the editor, running a program in the notes panel, naming notes and writing them from a template, the note picker, finding page tags, the config merge and upgrade, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
+The tests cover the page placement and clipping math, which images a frame places again, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, moving retired default keys, key and prompt handling, search stepping, the help list, reading colors and the theme file, encoding keys, the mouse and pastes for the editor, running a program in the notes panel, naming notes and writing them from a template, the note picker, finding page tags, reading printed page numbers off the pages, the config merge and upgrade, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
 
 ## License
 

@@ -152,6 +152,8 @@ pub enum Command {
     ClearSearch,
     /* `:offset 12`, or `:offset` alone to show it */
     Offset(Option<i32>),
+    /* Number the pages as printed on them again, rather than by `:offset` */
+    OffsetAuto,
     Marks,
     /* `:delm ab` deletes marks a and b, `:delm!` all of them */
     DeleteMarks(Option<String>),
@@ -165,6 +167,7 @@ pub fn parse_command(text: &str) -> Command {
         "q" | "q!" | "quit" => Command::Quit,
         "noh" | "nohl" | "nohlsearch" => Command::ClearSearch,
         "offset" => Command::Offset(None),
+        "offset auto" => Command::OffsetAuto,
         "marks" => Command::Marks,
         "delm!" | "delmarks!" => Command::DeleteMarks(None),
         _ if text.starts_with("delm ") || text.starts_with("delmarks ") => {
@@ -313,6 +316,7 @@ const GROUPS: [Group; 9] = [
             (":45", "The page printed as 45"),
             (":#45", "The 45th page of the file"),
             (":offset 12", "Make the 13th page printed page 1"),
+            (":offset auto", "Number pages as printed on them again"),
             (":marks", "List the marks"),
             (":delm a", "Delete mark a (:delm! all)"),
             (":noh", "Clear the search"),
@@ -408,6 +412,7 @@ mod tests {
         assert_eq!(parse_command("offset 12"), Command::Offset(Some(12)));
         assert_eq!(parse_command("offset -2"), Command::Offset(Some(-2)));
         assert_eq!(parse_command("offset"), Command::Offset(None));
+        assert_eq!(parse_command("offset auto"), Command::OffsetAuto);
         assert_eq!(parse_command("marks"), Command::Marks);
         assert_eq!(parse_command("delm!"), Command::DeleteMarks(None));
         assert_eq!(

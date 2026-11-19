@@ -70,6 +70,9 @@ pub struct App {
     pub title: String,
     /* The message on show and since when, so that it goes after a while */
     pub message_shown: Option<(String, Instant)>,
+    /* The page offset was set with `:offset`, so the numbers printed on the pages
+     * don't change it */
+    pub offset_by_hand: bool,
 }
 
 /* How long a message stays in the status bar */
@@ -235,6 +238,7 @@ pub fn open_store(file: &str, id: Option<String>, viewer: &mut Viewer, app: &mut
     let mut store = Store::new(dir, id, Path::new(file));
     if let Some(state) = store.load() {
         let _ = viewer.set_page_offset(state.page_offset);
+        app.offset_by_hand = state.offset_by_hand.unwrap_or(state.page_offset != 0);
         viewer.restore(state.page, state.within, state.zoom);
         app.marks = state
             .marks
@@ -306,6 +310,7 @@ pub fn file_state(viewer: &Viewer, app: &App) -> FileState {
         within,
         zoom,
         page_offset: viewer.page_offset(),
+        offset_by_hand: Some(app.offset_by_hand),
         marks: app.marks.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
         note: app
             .notes
@@ -436,6 +441,22 @@ pub fn apply_layout(viewer: &mut Viewer, app: &mut App) {
     }
 }
 
+/* Numbers the pages as printed on them, unless the PDF says how it numbers them or the
+ * offset was set by hand */
+pub fn apply_printed_numbers(offset: Option<i32>, viewer: &mut Viewer, app: &mut App) {
+    let Some(offset) = offset else { return };
+    if app.offset_by_hand || !viewer.has_plain_labels() || offset == viewer.page_offset()
+    {
+        return;
+    }
+    if viewer.set_page_offset(offset).is_ok() && offset > 0 {
+        app.message = Some(format!(
+            "Numbered as printed: page #{} is page 1",
+            offset + 1
+        ));
+    }
+}
+
 /* Takes in what the renderer sends: a (re)loaded document, a page image or search
  * results. `true` means the page images still queued are for an older version and
  * should be dropped. */
@@ -501,6 +522,10 @@ pub fn handle_result(
         }
         RendererResult::Image { page, data } => {
             viewer.handle_image(page, data);
+            false
+        }
+        RendererResult::PrintedNumbers { offset } => {
+            apply_printed_numbers(offset, viewer, app);
             false
         }
         RendererResult::SearchProgress {

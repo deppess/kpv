@@ -240,6 +240,11 @@ impl Viewer {
         self.page_offset
     }
 
+    /* The PDF doesn't say how its pages are numbered */
+    pub fn has_plain_labels(&self) -> bool {
+        labels::is_plain(&self.pdf_labels)
+    }
+
     fn page_top(&self, page: usize) -> f32 {
         if page == 0 {
             0.0

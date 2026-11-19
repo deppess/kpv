@@ -397,10 +397,15 @@ pub fn run_command(
                 n => format!("Printed page 1 is page #{}", n + 1),
             })
         }
-        Command::Offset(Some(offset)) => {
-            if let Err(e) = viewer.set_page_offset(offset) {
-                app.message = Some(e);
-            }
+        Command::Offset(Some(offset)) => match viewer.set_page_offset(offset) {
+            Ok(()) => app.offset_by_hand = true,
+            Err(e) => app.message = Some(e),
+        },
+        Command::OffsetAuto => {
+            app.offset_by_hand = false;
+            let _ = viewer.set_page_offset(0);
+            app.message = Some("Reading the page numbers off the pages".to_owned());
+            tell_renderer(renderer, app, RendererAction::ReadNumbers);
         }
         Command::Unknown(text) => {
             app.message = Some(format!("Unknown command: {}", text))
@@ -818,7 +823,8 @@ fn resize_toc(step: i16, app: &mut App) {
  * the file. The note keeps the keys. */
 fn go_to_tag(page: &str, viewer: &mut Viewer, app: &mut App) {
     let target = viewer.find_label(page).or_else(|| {
-        page.parse::<usize>()
+        page.trim_start_matches('#')
+            .parse::<usize>()
             .ok()
             .filter(|n| *n >= 1 && *n <= viewer.pages())
             .map(|n| n - 1)

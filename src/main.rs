@@ -8,6 +8,7 @@ mod input;
 mod jumps;
 mod labels;
 mod notes;
+mod numbers;
 mod outline;
 mod ruler;
 mod state;
@@ -227,6 +228,7 @@ fn main() {
         layer: None,
         title: frame_title(None, None, &arg),
         message_shown: None,
+        offset_by_hand: false,
     };
 
     let mut current_mouse = MouseEvent {

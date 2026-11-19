@@ -28,6 +28,10 @@ pub struct FileState {
     /* Printed page 1 is this many pages into the file; for scans without labels */
     #[serde(default)]
     pub page_offset: i32,
+    /* The offset was set with `:offset` rather than read off the pages; `None` in
+     * files from before the pages were read, when only `:offset` set it */
+    #[serde(default)]
+    pub offset_by_hand: Option<bool>,
     /* Seconds since 1970 */
     #[serde(default)]
     pub opened: u64,
@@ -184,6 +188,7 @@ fn same_place(a: &FileState, b: &FileState) -> bool {
         && (a.within - b.within).abs() < 1e-4
         && (a.zoom - b.zoom).abs() < 1e-4
         && a.page_offset == b.page_offset
+        && a.offset_by_hand == b.offset_by_hand
         && a.marks == b.marks
         && a.note == b.note
         && a.layout == b.layout

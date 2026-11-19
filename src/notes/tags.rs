@@ -1,6 +1,7 @@
 /* Page tags in a note: `(p. 45)`, which viewmer writes, and what people type by hand:
  * `p. 45`, `p.45`, `pp. 45-47` (the first page), `p. xiv`, `p. A-3`. The page is the
- * one printed on it, as the status bar shows it. */
+ * one printed on it, as the status bar shows it; `p. #30` is the 30th page of the
+ * file, for a page with no number printed on it. */
 
 /* A tag in a line: where it starts and ends, in characters, and the page it names */
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +52,10 @@ pub fn tags(line: &str) -> Vec<Tag> {
             j += 1;
         }
         let token_start = j;
+        /* `#30`: a page by its place in the file */
+        if chars.get(j) == Some(&'#') {
+            j += 1;
+        }
         while chars
             .get(j)
             .is_some_and(|c| c.is_alphanumeric() || *c == '-')
@@ -140,6 +145,7 @@ mod tests {
         assert_eq!(pages("see pp. 45-47"), ["45"]);
         assert_eq!(pages("(p. xiv) the foreword"), ["xiv"]);
         assert_eq!(pages("appendix p. A-3"), ["A-3"]);
+        assert_eq!(pages("(p. #30) before page one"), ["#30"]);
     }
 
     #[test]

@@ -44,6 +44,8 @@ pub enum RendererAction {
     /* Index into the last search results, drawn in the stronger color */
     SetCurrentMatch(Option<usize>),
     ClearSearch,
+    /* Read the page numbers printed on the pages again */
+    ReadNumbers,
 }
 
 /* One search hit: its page, and its top-left corner in page units from the page's
@@ -74,6 +76,11 @@ pub enum RendererResult {
     Image {
         page: usize,
         data: Option<Arc<RwLock<Image>>>,
+    },
+    /* How far into the file printed page 1 is, read off the pages' margins; `None` when
+     * they don't say clearly */
+    PrintedNumbers {
+        offset: Option<i32>,
     },
     /* Matches found since the last batch, by the search `generation`, with how many
      * of the `total` pages it has searched; it's done when they're all searched */
@@ -376,6 +383,18 @@ pub fn page_color(slot: Slot, fallback: [u8; 3], strength: u8) -> ([u8; 3], u8) 
     (p.rgb().unwrap_or(fallback), p.alpha().unwrap_or(strength))
 }
 
+/* Reads the page numbers printed on the pages, on a thread of its own with its own copy
+ * of the document, so that opening a file isn't slower */
+fn read_printed_numbers(file: String, results: PrioritySender<RendererResult, 2>) {
+    thread::spawn(move || {
+        let Ok(document) = Document::open(&file) else {
+            return;
+        };
+        let offset = crate::numbers::detect(&document);
+        let _ = results.try_send_priority(RendererResult::PrintedNumbers { offset }, 0);
+    });
+}
+
 /* Clear pixels around a page image: two cells, so that while a page waits for its
  * image at a new zoom, the old one can still be cut at whole cells */
 fn padding() -> usize {
@@ -476,6 +495,11 @@ impl Renderer {
                         result_server_sender.try_send_priority(result, 0).map_err(
                             |x| format!("Could not send results to client: {}", x),
                         )?;
+                        /* After the pages, so its answer comes after them */
+                        read_printed_numbers(
+                            state.file.clone(),
+                            result_server_sender.clone(),
+                        );
                     }
                     RendererAction::ToggleAlpha => {
                         state.alpha = !state.alpha;
@@ -496,6 +520,12 @@ impl Renderer {
                     RendererAction::SetCurrentMatch(current) => {
                         state.current_hit = current;
                         priority_server_receiver.clear_priority(1);
+                    }
+                    RendererAction::ReadNumbers => {
+                        read_printed_numbers(
+                            state.file.clone(),
+                            result_server_sender.clone(),
+                        );
                     }
                     RendererAction::ClearSearch => {
                         state.search_generation.fetch_add(1, Ordering::AcqRel);
