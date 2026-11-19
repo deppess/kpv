@@ -42,7 +42,7 @@ pub struct Image {
 
 impl Image {
     /* Sends `pixmap`, the part `region` of a page rendered for `scale` with at most
-     * `max_pixels`, to kitty with `padding` clear pixels around */
+     * `max_pixels`, to kitty; it's RGBA, with `padding` clear pixels around */
     pub fn new(
         pixmap: &Pixmap,
         padding: usize,
@@ -53,18 +53,15 @@ impl Image {
         static ID: AtomicUsize = AtomicUsize::new(1);
 
         let (width, height) = (pixmap.width() as usize, pixmap.height() as usize);
-        let data = pad_rgba(pixmap.samples(), width, pixmap.n() as usize, padding);
+        let data = pixmap.samples();
         let id = ID.fetch_add(1, Ordering::AcqRel);
-        terminal_graphics_transfer_bitmap(
-            id,
-            width + 2 * padding,
-            height + 2 * padding,
-            &data,
-            true,
-        )?;
+        terminal_graphics_transfer_bitmap(id, width, height, data, true)?;
         Ok(Self {
             id,
-            dimensions: (width as i32, height as i32),
+            dimensions: (
+                width.saturating_sub(2 * padding) as i32,
+                height.saturating_sub(2 * padding) as i32,
+            ),
             padding,
             scale,
             region,
@@ -107,28 +104,19 @@ impl Image {
     }
 }
 
-/* RGBA pixels of a bitmap with `n` (3 or 4) bytes per pixel, surrounded by `padding`
- * transparent pixels on every side. A bitmap without alpha becomes opaque. */
-pub fn pad_rgba(samples: &[u8], width: usize, n: usize, padding: usize) -> Vec<u8> {
-    let out_row = (width + 2 * padding) * 4;
-    let rows = samples.len().checked_div(width * n).unwrap_or(0);
-    let mut data = vec![0u8; out_row * (rows + 2 * padding)];
-
-    for (src, dst) in samples
-        .chunks_exact(width * n)
-        .zip(data.chunks_exact_mut(out_row).skip(padding))
-    {
-        let dst = &mut dst[padding * 4..][..width * 4];
-        if n == 3 {
-            for (px, out) in src.chunks_exact(3).zip(dst.chunks_exact_mut(4)) {
-                out[..3].copy_from_slice(px);
-                out[3] = 255;
-            }
+/* Makes the outer `padding` pixels of an RGBA bitmap `width` wide and `height` high
+ * clear */
+pub fn clear_border(samples: &mut [u8], width: usize, height: usize, padding: usize) {
+    let row = width * 4;
+    let padding = padding.min(width / 2).min(height / 2);
+    for (y, line) in samples.chunks_exact_mut(row).enumerate() {
+        if y < padding || y >= height - padding {
+            line.fill(0);
         } else {
-            dst.copy_from_slice(src);
+            line[..padding * 4].fill(0);
+            line[row - padding * 4..].fill(0);
         }
     }
-    data
 }
 
 /* Dark pages: white paper becomes `background` and black text becomes `text`, the
@@ -340,49 +328,13 @@ mod tests {
         }
     }
 
-    /* The conversion as it was first written, one pixel at a time */
-    fn pad_rgba_slow(samples: &[u8], width: usize, n: usize, padding: usize) -> Vec<u8> {
-        let mut data = vec![0u8; (width + 2 * padding) * padding * 4];
-        for row in samples.chunks(width * n) {
-            data.extend(std::iter::repeat_n(0u8, padding * 4));
-            if n == 3 {
-                for pixel in row.chunks(3) {
-                    data.extend_from_slice(pixel);
-                    data.push(255);
-                }
-            } else {
-                data.extend_from_slice(row);
-            }
-            data.extend(std::iter::repeat_n(0u8, padding * 4));
-        }
-        data.extend(std::iter::repeat_n(
-            0u8,
-            (width + 2 * padding) * padding * 4,
-        ));
-        data
-    }
-
     #[test]
-    fn padding_matches_the_pixel_by_pixel_conversion() {
-        for n in [3, 4] {
-            for (width, rows, padding) in [(5, 3, 2), (1, 1, 0), (7, 4, 3), (4, 0, 2)] {
-                let samples: Vec<u8> =
-                    (0..width * rows * n).map(|i| (i * 7 + 1) as u8).collect();
-                assert_eq!(
-                    pad_rgba(&samples, width, n, padding),
-                    pad_rgba_slow(&samples, width, n, padding),
-                    "n {n}, {width}x{rows}, padding {padding}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn padding_is_clear_and_the_page_opaque() {
-        let data = pad_rgba(&[10, 20, 30], 1, 3, 1);
-        assert_eq!(data.len(), 3 * 3 * 4);
-        assert_eq!(&data[(3 + 1) * 4..][..4], &[10, 20, 30, 255]);
-        assert_eq!(data.iter().filter(|b| **b != 0).count(), 4);
+    fn the_border_is_clear_and_the_page_stays() {
+        let mut px = vec![255u8; 4 * 3 * 4];
+        clear_border(&mut px, 4, 3, 1);
+        let opaque: Vec<usize> = (0..12).filter(|i| px[i * 4 + 3] == 255).collect();
+        /* Of 4 x 3 pixels, the middle row's inner two */
+        assert_eq!(opaque, [5, 6]);
     }
 
     #[test]

@@ -10,7 +10,10 @@ use std::{
     },
     path::Path,
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{
+        mpsc::{channel, Receiver, TryRecvError},
+        Arc, Mutex,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -22,7 +25,6 @@ use alacritty_terminal::{
     term::{cell::Flags, Config, Term, TermMode},
     vte::ansi::{Color as TermColor, CursorShape, NamedColor, Processor, Rgb},
 };
-use crossbeam_channel::{unbounded, Receiver};
 use crossterm::{
     event::{KeyEvent, KeyModifiers, MouseEventKind},
     style::{Attribute, Attributes, Color},
@@ -87,7 +89,7 @@ pub struct Pane {
     parser: Processor,
     events: Arc<Mutex<Vec<Event>>>,
     /* What the program writes; closes when it exits */
-    pub output: Receiver<Vec<u8>>,
+    output: Receiver<Vec<u8>>,
     cols: u16,
     rows: u16,
     pixels: (u16, u16),
@@ -154,19 +156,19 @@ impl Pane {
         let child = command.spawn().map_err(failed)?;
         let master = File::from(master);
         let mut reader = master.try_clone().map_err(failed)?;
-        let (sender, output) = unbounded::<Vec<u8>>();
+        /* The main loop hears of every read, and of the end once the program and
+         * all it started are gone */
+        let (sender, output) = channel::<Vec<u8>>();
         thread::spawn(move || {
             let mut buffer = [0u8; 65536];
-            loop {
-                match reader.read(&mut buffer) {
-                    Ok(0) | Err(_) => return,
-                    Ok(n) => {
-                        if sender.send(buffer[..n].to_vec()).is_err() {
-                            return;
-                        }
-                    }
+            while let Ok(n @ 1..) = reader.read(&mut buffer) {
+                if sender.send(buffer[..n].to_vec()).is_err() {
+                    return;
                 }
+                crate::threads::wake(crate::threads::Wake::Terminal);
             }
+            drop(sender);
+            crate::threads::wake(crate::threads::Wake::Terminal);
         });
 
         let events = Arc::new(Mutex::new(Vec::new()));
@@ -197,21 +199,18 @@ impl Pane {
         })
     }
 
-    /* Takes in bytes the program wrote */
-    pub fn feed(&mut self, bytes: &[u8]) {
-        self.process(bytes);
-        self.answer();
-    }
-
-    /* Takes in everything the program has written so far; `true` if there was some */
+    /* Takes in everything the program has written so far; `false` once it has ended
+     * and there's nothing more */
     pub fn take_output(&mut self) -> bool {
-        let mut any = false;
-        while let Ok(bytes) = self.output.try_recv() {
-            self.process(&bytes);
-            any = true;
-        }
+        let open = loop {
+            match self.output.try_recv() {
+                Ok(bytes) => self.process(&bytes),
+                Err(TryRecvError::Empty) => break true,
+                Err(TryRecvError::Disconnected) => break false,
+            }
+        };
         self.answer();
-        any
+        open
     }
 
     /* Text goes to the screen; image commands become commands for kitty, placed where

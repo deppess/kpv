@@ -4,7 +4,6 @@ use std::{
     sync::{atomic::Ordering, Arc, RwLock},
 };
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
 use crossterm::event::MouseEvent;
 use mupdf::{link::LinkDestination, DestinationKind, Link};
 
@@ -33,86 +32,10 @@ pub struct DisplayRect {
     pub height: i32,
 }
 
-pub trait Point {
-    fn x(&self) -> i32;
-    fn y(&self) -> i32;
-}
-
-pub trait Rect {
-    fn x(&self) -> i32;
-    fn y(&self) -> i32;
-    fn width(&self) -> i32;
-    fn height(&self) -> i32;
-}
-
-fn rect_point_intersect<R: Rect, P: Point>(rect: &R, point: &P) -> bool {
-    let rect_x = rect.x();
-    let rect_y = rect.y();
-    let rect_width = rect.width();
-    let rect_height = rect.height();
-
-    let point_x = point.x();
-    let point_y = point.y();
-
-    let cr1 = point_x >= rect_x && point_x <= (rect_x + rect_width);
-    let cr2 = point_y >= rect_y && point_y <= (rect_y + rect_height);
-
-    cr1 && cr2
-}
-
-impl Point for MouseEvent {
-    fn x(&self) -> i32 {
-        self.column as i32
-    }
-
-    fn y(&self) -> i32 {
-        self.row as i32
-    }
-}
-
-impl Point for (i32, i32) {
-    fn x(&self) -> i32 {
-        self.0
-    }
-
-    fn y(&self) -> i32 {
-        self.1
-    }
-}
-
-impl Rect for DisplayRect {
-    fn x(&self) -> i32 {
-        self.x
-    }
-
-    fn y(&self) -> i32 {
-        self.y
-    }
-
-    fn width(&self) -> i32 {
-        self.width
-    }
-
-    fn height(&self) -> i32 {
-        self.height
-    }
-}
-
-impl Rect for mupdf::rect::Rect {
-    fn x(&self) -> i32 {
-        self.x0 as i32
-    }
-
-    fn y(&self) -> i32 {
-        self.y0 as i32
-    }
-
-    fn width(&self) -> i32 {
-        (self.x1 - self.x0) as i32
-    }
-
-    fn height(&self) -> i32 {
-        (self.y1 - self.y0) as i32
+impl DisplayRect {
+    fn contains(&self, (x, y): (i32, i32)) -> bool {
+        (self.x..=self.x + self.width).contains(&x)
+            && (self.y..=self.y + self.height).contains(&y)
     }
 }
 
@@ -153,48 +76,42 @@ pub struct Viewer {
     /* Coarse whole pages kept under a sharp part, so that past its edge the page shows
      * rather than nothing until the next part arrives */
     under: HashMap<usize, Arc<RwLock<Image>>>,
-    invalidated: HashMap<usize, ()>,
+    invalidated: HashSet<usize>,
     /* What was last asked of the renderer for each page */
     scheduled4render: HashMap<usize, Request>,
     /* The pages the last frame wanted, which are never dropped to make room */
     wanted: HashSet<usize>,
     memory_used: usize,
+    /* Pages with an image, the one that came longest ago first */
     last_rendered: VecDeque<usize>,
     /* Failed placements in a row, per page */
     failures: HashMap<usize, usize>,
-
-    sender_rerender: Sender<()>,
 }
 
 impl Viewer {
-    pub fn new() -> (Self, Receiver<()>) {
-        let (sender_rerender, receiver_rerender) = unbounded::<()>();
-        (
-            Self {
-                scale: 1.0,
-                page_first: 0,
-                page_view: 0,
-                offset: (0.0f32, 0.0f32),
-                fit_scale: 1.0,
-                max_width: -f32::INFINITY,
-                cumulative_heights: Vec::new(),
-                widths: Vec::new(),
-                links: Vec::new(),
-                pdf_labels: Vec::new(),
-                labels: Vec::new(),
-                page_offset: 0,
-                images: HashMap::new(),
-                under: HashMap::new(),
-                invalidated: HashMap::new(),
-                scheduled4render: HashMap::new(),
-                wanted: HashSet::new(),
-                memory_used: 0,
-                last_rendered: VecDeque::new(),
-                failures: HashMap::new(),
-                sender_rerender,
-            },
-            receiver_rerender,
-        )
+    pub fn new() -> Self {
+        Self {
+            scale: 1.0,
+            page_first: 0,
+            page_view: 0,
+            offset: (0.0f32, 0.0f32),
+            fit_scale: 1.0,
+            max_width: -f32::INFINITY,
+            cumulative_heights: Vec::new(),
+            widths: Vec::new(),
+            links: Vec::new(),
+            pdf_labels: Vec::new(),
+            labels: Vec::new(),
+            page_offset: 0,
+            images: HashMap::new(),
+            under: HashMap::new(),
+            invalidated: HashSet::new(),
+            scheduled4render: HashMap::new(),
+            wanted: HashSet::new(),
+            memory_used: 0,
+            last_rendered: VecDeque::new(),
+            failures: HashMap::new(),
+        }
     }
 
     pub fn is_uninit(&self) -> bool {
@@ -368,7 +285,7 @@ impl Viewer {
     pub fn invalidate_pages(&mut self, pages: &[usize]) {
         for page in pages {
             if self.images.contains_key(page) {
-                self.invalidated.insert(*page, ());
+                self.invalidated.insert(*page);
                 self.scheduled4render.remove(page);
             }
         }
@@ -378,7 +295,7 @@ impl Viewer {
         self.invalidated.clear();
         self.scheduled4render.clear();
         for k in self.images.keys() {
-            self.invalidated.insert(*k, ());
+            self.invalidated.insert(*k);
         }
     }
 
@@ -643,16 +560,19 @@ impl Viewer {
         let (page, rect) = self
             .calculate_display_bounds()
             .into_iter()
-            .find(|(_, rect)| rect_point_intersect(rect, &mouse))?;
+            .find(|(_, rect)| rect.contains(mouse))?;
 
-        let page_point = (
-            ((mouse.0 - rect.x) as f32 / self.scale) as i32,
-            ((mouse.1 - rect.y) as f32 / self.scale) as i32,
+        let (x, y) = (
+            (mouse.0 - rect.x) as f32 / self.scale,
+            (mouse.1 - rect.y) as f32 / self.scale,
         );
         self.links
             .get(page)?
             .iter()
-            .find(|link| rect_point_intersect(&link.bounds, &page_point))
+            .find(|link| {
+                let b = &link.bounds;
+                (b.x0..=b.x1).contains(&x) && (b.y0..=b.y1).contains(&y)
+            })
             .cloned()
     }
 
@@ -680,7 +600,7 @@ impl Viewer {
          * it; a whole one arriving needs nothing under it */
         let whole = self.whole_page(page);
         let is_whole = |i: &Arc<RwLock<Image>>| covers(i.read().unwrap().region(), whole);
-        let stale = self.invalidated.remove(&page).is_some();
+        let stale = self.invalidated.remove(&page);
         let new_whole = is_whole(&image);
         if let Some(old) = self.images.remove(&page) {
             if !new_whole && !stale && is_whole(&old) {
@@ -698,6 +618,7 @@ impl Viewer {
         }
 
         self.memory_used += image.read().unwrap().size();
+        self.last_rendered.retain(|p| *p != page);
         self.last_rendered.push_back(page);
 
         /* An image for an older request stands in, but the newer request stays */
@@ -713,9 +634,8 @@ impl Viewer {
         self.images.insert(page, image);
         self.failures.remove(&page);
 
-        /* The oldest images go first. A page rendered again is in the queue more than
-         * once and stays while a newer entry stands for it. Pages on screen or kept
-         * ready stay too: dropping them would only have them rendered again. */
+        /* The oldest images go first. Pages on screen or kept ready stay: dropping
+         * them would only have them rendered again. */
         while self.memory_used >= MEMORY_LIMIT {
             let Some(i) = self
                 .last_rendered
@@ -724,14 +644,14 @@ impl Viewer {
             else {
                 break;
             };
-            let oldest = self.last_rendered.remove(i).unwrap_or(page);
-            if !self.last_rendered.contains(&oldest) {
+            if let Some(oldest) = self.last_rendered.remove(i) {
                 self.remove_image(oldest);
             }
         }
     }
 
     fn remove_image(&mut self, page: usize) {
+        self.last_rendered.retain(|p| *p != page);
         for old in [self.images.remove(&page), self.under.remove(&page)]
             .into_iter()
             .flatten()
@@ -791,7 +711,7 @@ impl Viewer {
             None => true,
             Some(image) => {
                 let image = image.read().unwrap();
-                self.invalidated.contains_key(&page)
+                self.invalidated.contains(&page)
                     || !enough(image.region(), image.max_pixels(), image.scale())
             }
         };
@@ -891,7 +811,7 @@ impl Viewer {
         self.remove_image(page);
         self.scheduled4render.remove(&page);
         self.failures.insert(page, failures);
-        let _ = self.sender_rerender.send(());
+        crate::threads::wake(crate::threads::Wake::Redraw);
         true
     }
 

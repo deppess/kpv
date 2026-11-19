@@ -4,12 +4,12 @@ use std::io::{self, Write};
 use std::time::Duration;
 
 use alacritty_terminal::vte::ansi::CursorShape;
-use crossbeam_channel::Receiver;
 use crossterm::cursor::{Hide, MoveTo, SetCursorStyle, Show};
 use crossterm::terminal::{
     BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate,
 };
 use crossterm::{execute, queue};
+use std::sync::mpsc::Receiver;
 
 use crate::app::*;
 use crate::config::*;

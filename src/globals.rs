@@ -1,8 +1,8 @@
 use crate::config::Config;
-use crossbeam_channel::Receiver;
 use crossterm::terminal::WindowSize;
 use std::sync::{
     atomic::{AtomicBool, AtomicU32},
+    mpsc::Receiver,
     Mutex, OnceLock, RwLock,
 };
 
@@ -123,10 +123,3 @@ pub static TERMINAL_SIZE: OnceLock<RwLock<WindowSize>> = OnceLock::new();
 pub static RENDER_SCALE: AtomicU32 = AtomicU32::new(0);
 pub static SOFTWARE_ID: OnceLock<String> = OnceLock::new();
 pub static RUNNING: AtomicBool = AtomicBool::new(true);
-
-#[macro_export]
-macro_rules! clear_channel {
-    ($chan:expr) => {
-        while let Ok(_) = $chan.try_recv() {}
-    };
-}

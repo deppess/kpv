@@ -14,7 +14,6 @@ unicode-width = "0.2"
 alacritty_terminal = "0.26"
 signal-hook = "0.3.18"
 libc = "0.2"
-crossbeam-channel = "0.5.15"
 
 [patch.crates-io]
 crossterm = { path = "vendor/crossterm" }

@@ -5,8 +5,6 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use crossbeam_channel::{unbounded, Receiver};
-
 /* How often the file is looked at. A change is reloaded once the file has stayed the
  * same for one more look, so that a file written in several steps is only loaded once
  * it's complete. */
@@ -19,13 +17,16 @@ fn version(path: &str) -> Option<(u64, u64, SystemTime)> {
     Some((meta.ino(), meta.len(), meta.modified().ok()?))
 }
 
-/* Sends `()` each time the file has changed and settled */
-pub fn spawn(file: &str) -> Result<Receiver<()>, String> {
+/* Calls `changed` each time the file has changed and settled, until it returns
+ * `false` */
+pub fn spawn(
+    file: &str,
+    changed: impl Fn() -> bool + Send + 'static,
+) -> Result<(), String> {
     let path = fs::canonicalize(file)
         .map_err(|x| format!("Could not resolve the file path: {}", x))?
         .to_string_lossy()
         .into_owned();
-    let (sender, receiver) = unbounded::<()>();
     thread::spawn(move || {
         let mut loaded = version(&path);
         let mut last = loaded;
@@ -39,13 +40,13 @@ pub fn spawn(file: &str) -> Result<Receiver<()>, String> {
             }
             if now != loaded {
                 loaded = now;
-                if sender.send(()).is_err() {
+                if !changed() {
                     return;
                 }
             }
         }
     });
-    Ok(receiver)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -62,7 +63,8 @@ mod tests {
         let file = folder.join("doc.pdf");
         fs::write(&file, b"one").unwrap();
 
-        let reloads = spawn(file.to_str().unwrap()).unwrap();
+        let (sender, reloads) = std::sync::mpsc::channel();
+        spawn(file.to_str().unwrap(), move || sender.send(()).is_ok()).unwrap();
         thread::sleep(EVERY * 2);
 
         let temp = folder.join("doc.pdf.tmp");

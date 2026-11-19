@@ -2,26 +2,27 @@ use core::f32;
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
+        mpsc::{channel, Receiver, Sender},
         Arc, Mutex, RwLock,
     },
-    thread::{self, JoinHandle},
+    thread,
     time::{Duration, Instant},
 };
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
 use mupdf::{
     Colorspace, Device, Document, Link, Matrix, MetadataName, Page, Pixmap, Quad,
 };
 
+use crate::image::clear_border;
 use crate::{
     config::Config,
-    drivers::priority_channel::{unbounded_priority, PriorityReceiver, PrioritySender},
     globals::{CONFIG, RENDER_SCALE, RUNNING},
     image::{recolor_pixels, Image, Region},
     labels,
     outline::{self, OutlineEntry},
     store,
     theme::{paint, Slot},
+    threads::{wake, Wake},
 };
 
 /* A page to render: the part `region` of it at `scale` pixels per page unit, with at
@@ -219,8 +220,10 @@ impl<'a> RendererInnerState<'a> {
 }
 
 impl RendererInnerState<'_> {
-    /* Draws the part of a page a request asks for. Returns the bitmap, the scale it was
-     * drawn at, and the part of the page it covers, snapped to whole pixels. */
+    /* Draws the part of a page a request asks for into an RGBA bitmap with `padding()`
+     * clear pixels around it, which kitty takes as it is. Returns the bitmap, the
+     * scale it was drawn at, and the part of the page it covers, snapped to whole
+     * pixels. */
     fn render(&self, request: &Request) -> Option<(Pixmap, f32, Region)> {
         let page = self.cache.get(request.page)?;
         let bounds = page.bounds().ok()?;
@@ -237,13 +240,22 @@ impl RendererInnerState<'_> {
         let top = px(y0, bounds.y0).floor() as i32;
         let right = (px(x1, bounds.x0).ceil() as i32).max(left + 1);
         let bottom = (px(y1, bounds.y0).ceil() as i32).max(top + 1);
-        let mut pixmap =
-            Pixmap::new(&self.cs, left, top, right - left, bottom - top, self.alpha)
-                .ok()?;
+        let pad = padding() as i32;
+        let mut pixmap = Pixmap::new(
+            &self.cs,
+            left - pad,
+            top - pad,
+            right - left + 2 * pad,
+            bottom - top + 2 * pad,
+            true,
+        )
+        .ok()?;
         if self.alpha {
             pixmap.clear().ok()?;
         } else {
             pixmap.clear_with(255).ok()?;
+            let (width, height) = (pixmap.width() as usize, pixmap.height() as usize);
+            clear_border(pixmap.samples_mut(), width, height, pad as usize);
         }
         {
             let device = Device::from_pixmap(&pixmap).ok()?;
@@ -262,11 +274,7 @@ impl RendererInnerState<'_> {
     /* Searches the document on a thread of its own, with its own copy of it, so that
      * pages go on rendering. Matches go to the viewer a batch at a time and into the
      * hits painted on pages as they're found; a newer search or a reload stops it. */
-    fn start_search(
-        &mut self,
-        needle: String,
-        results: PrioritySender<RendererResult, 2>,
-    ) {
+    fn start_search(&mut self, needle: String) {
         const MAX_HITS_PER_PAGE: u32 = 500;
         const BATCH: Duration = Duration::from_millis(100);
 
@@ -288,7 +296,7 @@ impl RendererInnerState<'_> {
                     searched,
                     total,
                 };
-                let _ = results.try_send_priority(progress, 0);
+                wake(Wake::Rendered(progress));
             };
             let Ok(document) = Document::open(&file) else {
                 send(Vec::new(), 0, 0);
@@ -385,13 +393,13 @@ pub fn page_color(slot: Slot, fallback: [u8; 3], strength: u8) -> ([u8; 3], u8) 
 
 /* Reads the page numbers printed on the pages, on a thread of its own with its own copy
  * of the document, so that opening a file isn't slower */
-fn read_printed_numbers(file: String, results: PrioritySender<RendererResult, 2>) {
+fn read_printed_numbers(file: String) {
     thread::spawn(move || {
         let Ok(document) = Document::open(&file) else {
             return;
         };
         let offset = crate::numbers::detect(&document);
-        let _ = results.try_send_priority(RendererResult::PrintedNumbers { offset }, 0);
+        wake(Wake::Rendered(RendererResult::PrintedNumbers { offset }));
     });
 }
 
@@ -413,162 +421,25 @@ fn quad_bounds(quad: &Quad) -> mupdf::Rect {
     }
 }
 
+/* The viewer's side of the renderer thread, which draws pages and sends them, with
+ * everything else it finds, to the main loop */
 pub struct Renderer {
-    thread_render: Option<JoinHandle<Result<(), String>>>,
-
     /* What the viewer asks for, in order */
     actions: Sender<RendererAction>,
-    inbox: Receiver<RendererAction>,
-
-    result_server_sender: PrioritySender<RendererResult, 2>,
 }
 
 impl Renderer {
-    pub fn new() -> (Self, PriorityReceiver<RendererResult, 2>) {
-        let (actions, inbox) = unbounded::<RendererAction>();
-
-        let (result_server_sender, result_client_receiver) =
-            unbounded_priority::<RendererResult, 2>();
-
-        (
-            Self {
-                thread_render: None,
-
-                actions,
-                inbox,
-
-                result_server_sender,
-            },
-            result_client_receiver,
-        )
-    }
-
-    pub fn run(&mut self, file_input: &str) -> Result<(), String> {
+    pub fn start(file_input: &str) -> Self {
         let file_string = file_input.to_owned();
-        let inbox = self.inbox.clone();
-        let result_server_sender = self.result_server_sender.clone();
-
-        let thread_render = thread::spawn(move || {
-            let result_server_sender = result_server_sender;
-
-            let mut state = RendererInnerState::new(file_string)?;
-
-            while RUNNING.load(Ordering::Acquire) {
-                let action = inbox
-                    .recv()
-                    .map_err(|x| format!("Could not receive from client: {}", x))?;
-
-                match action {
-                    RendererAction::Load => {
-                        /* What was asked of the old version goes */
-                        while inbox.try_recv().is_ok() {}
-                        /* A failed reload keeps showing the last good version */
-                        let Ok(result) = state.load() else { continue };
-                        result_server_sender.try_send_priority(result, 0).map_err(
-                            |x| format!("Could not send results to client: {}", x),
-                        )?;
-                        /* After the pages, so its answer comes after them */
-                        read_printed_numbers(
-                            state.file.clone(),
-                            result_server_sender.clone(),
-                        );
-                    }
-                    RendererAction::ToggleAlpha => {
-                        state.alpha = !state.alpha;
-                    }
-                    RendererAction::ToggleInverse => {
-                        state.inverse = !state.inverse;
-                    }
-                    RendererAction::Search(needle) => {
-                        state.start_search(needle, result_server_sender.clone());
-                    }
-                    RendererAction::SetCurrentMatch(current) => {
-                        state.current_hit = current;
-                    }
-                    RendererAction::ReadNumbers => {
-                        read_printed_numbers(
-                            state.file.clone(),
-                            result_server_sender.clone(),
-                        );
-                    }
-                    RendererAction::ClearSearch => {
-                        state.search_generation.fetch_add(1, Ordering::AcqRel);
-                        state.hits.lock().unwrap().clear();
-                        state.current_hit = None;
-                    }
-                    RendererAction::Display(request) => {
-                        let page = request.page;
-                        /* A newer zoom asked for this page at another scale */
-                        let wanted = f32::from_bits(RENDER_SCALE.load(Ordering::Acquire));
-                        if (request.scale - wanted).abs() > wanted * 1e-3 {
-                            continue;
-                        }
-                        if state.cache.get(page).is_none() {
-                            // Sending `None` as data signals that it should be
-                            // removed from the registry
-                            result_server_sender
-                                .try_send_priority(
-                                    RendererResult::Image { page, data: None },
-                                    1,
-                                )
-                                .map_err(|x| {
-                                    format!("Could not send result to client: {}", x)
-                                })?;
-                            continue;
-                        }
-
-                        /* A page that can't be drawn stays blank */
-                        let Some((mut pixmap, render, region)) = state.render(&request)
-                        else {
-                            continue;
-                        };
-                        if state.inverse {
-                            let n = pixmap.n() as usize;
-                            let (background, _) =
-                                page_color(Slot::PagesDarkBackground, [30, 30, 36], 255);
-                            let (text, _) =
-                                page_color(Slot::PagesDarkText, [220, 220, 224], 255);
-                            recolor_pixels(pixmap.samples_mut(), n, background, text);
-                        }
-                        state.highlight(page, &mut pixmap, render);
-
-                        let Ok(image) = Image::new(
-                            &pixmap,
-                            padding(),
-                            request.scale,
-                            region,
-                            request.max_pixels,
-                        ) else {
-                            continue;
-                        };
-                        result_server_sender
-                            .try_send_priority(
-                                RendererResult::Image {
-                                    page,
-                                    data: Some(Arc::new(RwLock::new(image))),
-                                },
-                                1,
-                            )
-                            .map_err(|x| {
-                                format!("Could not send results to client: {}", x)
-                            })?;
-                    }
-                };
-            }
-
-            Ok(())
+        let (actions, inbox) = channel::<RendererAction>();
+        thread::spawn(move || {
+            let error = match render_loop(file_string, inbox) {
+                Ok(()) => "The renderer stopped".to_owned(),
+                Err(e) => e,
+            };
+            wake(Wake::Fatal(error));
         });
-
-        /* ======================== Check and move the threads ======================= */
-        if thread_render.is_finished() {
-            thread_render
-                .join()
-                .map_err(|_| "The renderer stopped".to_owned())??;
-        } else {
-            self.thread_render = Some(thread_render);
-        }
-
-        Ok(())
+        Self { actions }
     }
 
     /* Queues an action for the renderer, which takes them in order */
@@ -577,4 +448,92 @@ impl Renderer {
             .send(action)
             .map_err(|_| "The renderer stopped".to_owned())
     }
+}
+
+fn render_loop(
+    file_string: String,
+    inbox: Receiver<RendererAction>,
+) -> Result<(), String> {
+    let mut state = RendererInnerState::new(file_string)?;
+
+    while RUNNING.load(Ordering::Acquire) {
+        let action = inbox
+            .recv()
+            .map_err(|x| format!("Could not receive from client: {}", x))?;
+
+        match action {
+            RendererAction::Load => {
+                /* What was asked of the old version goes */
+                while inbox.try_recv().is_ok() {}
+                /* A failed reload keeps showing the last good version */
+                let Ok(result) = state.load() else { continue };
+                wake(Wake::Rendered(result));
+                /* After the pages, so its answer comes after them */
+                read_printed_numbers(state.file.clone());
+            }
+            RendererAction::ToggleAlpha => {
+                state.alpha = !state.alpha;
+            }
+            RendererAction::ToggleInverse => {
+                state.inverse = !state.inverse;
+            }
+            RendererAction::Search(needle) => {
+                state.start_search(needle);
+            }
+            RendererAction::SetCurrentMatch(current) => {
+                state.current_hit = current;
+            }
+            RendererAction::ReadNumbers => {
+                read_printed_numbers(state.file.clone());
+            }
+            RendererAction::ClearSearch => {
+                state.search_generation.fetch_add(1, Ordering::AcqRel);
+                state.hits.lock().unwrap().clear();
+                state.current_hit = None;
+            }
+            RendererAction::Display(request) => {
+                let page = request.page;
+                /* A newer zoom asked for this page at another scale */
+                let wanted = f32::from_bits(RENDER_SCALE.load(Ordering::Acquire));
+                if (request.scale - wanted).abs() > wanted * 1e-3 {
+                    continue;
+                }
+                if state.cache.get(page).is_none() {
+                    // Sending `None` as data signals that it should be
+                    // removed from the registry
+                    wake(Wake::Rendered(RendererResult::Image { page, data: None }));
+                    continue;
+                }
+
+                /* A page that can't be drawn stays blank */
+                let Some((mut pixmap, render, region)) = state.render(&request) else {
+                    continue;
+                };
+                if state.inverse {
+                    let n = pixmap.n() as usize;
+                    let (background, _) =
+                        page_color(Slot::PagesDarkBackground, [30, 30, 36], 255);
+                    let (text, _) = page_color(Slot::PagesDarkText, [220, 220, 224], 255);
+                    recolor_pixels(pixmap.samples_mut(), n, background, text);
+                }
+                state.highlight(page, &mut pixmap, render);
+
+                let Ok(image) = Image::new(
+                    &pixmap,
+                    padding(),
+                    request.scale,
+                    region,
+                    request.max_pixels,
+                ) else {
+                    continue;
+                };
+                wake(Wake::Rendered(RendererResult::Image {
+                    page,
+                    data: Some(Arc::new(RwLock::new(image))),
+                }));
+            }
+        };
+    }
+
+    Ok(())
 }
