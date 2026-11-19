@@ -90,12 +90,14 @@ pub fn letters(n: u32) -> String {
 pub fn decode_text(bytes: &[u8]) -> String {
     let utf16 = |bytes: &[u8], big: bool| {
         let units: Vec<u16> = bytes
-            .chunks_exact(2)
-            .map(|c| {
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&pair| {
                 if big {
-                    u16::from_be_bytes([c[0], c[1]])
+                    u16::from_be_bytes(pair)
                 } else {
-                    u16::from_le_bytes([c[0], c[1]])
+                    u16::from_le_bytes(pair)
                 }
             })
             .collect();

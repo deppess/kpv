@@ -1,4 +1,3 @@
-use core::f32;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{atomic::Ordering, Arc, RwLock},
