@@ -178,11 +178,6 @@ pub fn move_link(text: &str, old: &Path, new: &Path) -> Option<String> {
     text.contains(&old).then(|| text.replace(&old, &new))
 }
 
-/* The line to open a note at: the last one, ready to add to it */
-pub fn last_line(text: &str) -> usize {
-    text.lines().count() + usize::from(text.ends_with('\n') || text.is_empty())
-}
-
 /* helix's config for the helix in the panel only: it saves when focus leaves the panel,
  * and a second after typing stops, so a crash or a killed viewer loses next to nothing */
 pub fn helix_config(user: Option<&str>) -> String {
@@ -297,13 +292,6 @@ mod tests {
         let moved = move_link(&text, old, new).unwrap();
         assert!(moved.contains("[A](</new/a b.pdf>)"), "{}", moved);
         assert_eq!(move_link(&moved, old, new), None);
-    }
-
-    #[test]
-    fn notes_open_at_their_last_line() {
-        assert_eq!(last_line("# A\n\nLinks: \nTags: \n"), 5);
-        assert_eq!(last_line("# A"), 1);
-        assert_eq!(last_line(""), 1);
     }
 
     #[test]

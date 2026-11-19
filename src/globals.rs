@@ -9,6 +9,7 @@ use std::sync::{
 pub const HELP_MSG: &str = r#"viewmer: kitty terminal PDF viewer
 
 Usage: viewmer <file>
+       viewmer --note <file> [name]   Makes the file's note if needed and prints where
 
 Global options:
 -h, --help          Print this usage information.
@@ -43,7 +44,9 @@ remember_position = true
 vault = "~/Notes"
 # Where new notes go, inside the vault; empty for the vault itself
 folder = ""
-# The editor in the notes panel
+# The shell in the notes panel; empty for the one you log in with
+shell = ""
+# The editor `pdfnote` opens; `hx` in the panel saves when focus leaves it
 editor = "hx"
 # A note to start new ones from, where {{title}} becomes the note's name and
 # {{source}} a link to the PDF. Empty for a title and a link.
@@ -100,8 +103,6 @@ width = 45
 "Ctrl+h" = "FocusNote"
 "Ctrl+l" = "FocusPdf"
 "Ctrl+Space x" = "HideNote"
-"Ctrl+Space s" = "SwitchNote"
-"Ctrl+Space c" = "NewNote"
 "Ctrl+Space p" = "TagPage"
 "Ctrl+Space g" = "GoToTag"
 "Ctrl+=" = "WidenNote"

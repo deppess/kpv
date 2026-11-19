@@ -135,7 +135,6 @@ pub const CONTENTS_TINT_ID: usize = 0x7FFF_0002;
 pub const SELECTED_TINT_ID: usize = 0x7FFF_0003;
 pub const HELP_TINT_ID: usize = 0x7FFF_0004;
 pub const NOTES_TINT_ID: usize = 0x7FFF_0005;
-pub const NOTES_SELECTED_TINT_ID: usize = 0x7FFF_0006;
 pub const LAYER_TINT_ID: usize = 0x7FFF_0007;
 
 /* Sends a one-pixel image, straight in the command since it's tiny. Quiet. */

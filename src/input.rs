@@ -8,7 +8,7 @@ use crate::config::*;
 use crate::drivers::commands::PointerShape;
 use crate::frame::set_pointer;
 use crate::globals::*;
-use crate::notes::{picker::PickerKey, tags};
+use crate::notes::tags;
 use crate::outline::{current_section, TocKey};
 use crate::ruler;
 use crate::state::*;
@@ -237,8 +237,6 @@ pub fn handle_key(
         ConfigAction::FocusNote
         | ConfigAction::FocusPdf
         | ConfigAction::HideNote
-        | ConfigAction::SwitchNote
-        | ConfigAction::NewNote
         | ConfigAction::WidenNote
         | ConfigAction::NarrowNote
         | ConfigAction::TagPage
@@ -278,10 +276,8 @@ pub fn handle_mouse_scroll(
     let over_toc = app.mode == Mode::Toc && ui::over_toc(&viewport(), x, y);
     if !over_toc && !matches!(app.mode, Mode::Help { .. }) {
         if let Some((col, row)) = over_notes(app, x, y) {
-            if let Some(editor) = &mut app.notes.editor {
-                if app.notes.picker.is_none() {
-                    editor.mouse(kind, mods, col, row);
-                }
+            if let Some(pane) = app.notes.terminal.as_mut() {
+                pane.mouse(kind, mods, col, row);
             }
             return false;
         }
@@ -606,8 +602,6 @@ pub fn pane_action(action: ConfigAction, viewer: &mut Viewer, app: &mut App) {
         }
         ConfigAction::FocusPdf => app.notes.unfocus(),
         ConfigAction::HideNote => app.notes.hide(),
-        ConfigAction::SwitchNote => app.notes.choose_another(false),
-        ConfigAction::NewNote => app.notes.choose_another(true),
         /* A small step, so that holding the key resizes smoothly */
         ConfigAction::WidenNote | ConfigAction::NarrowNote => {
             let step: i16 = if action == ConfigAction::WidenNote {
@@ -622,8 +616,8 @@ pub fn pane_action(action: ConfigAction, viewer: &mut Viewer, app: &mut App) {
         /* At the editor's cursor, as a paste, so helix keeps its mode */
         ConfigAction::TagPage => {
             let label = viewer.page_label(viewer.page_view());
-            match &mut app.notes.editor {
-                Some(editor) if app.notes.picker.is_none() => {
+            match &mut app.notes.terminal {
+                Some(editor) => {
                     editor.paste(&format!("{} ", tags::tag(&label)));
                     app.message = Some(format!("Tagged page {}", label));
                 }
@@ -632,7 +626,7 @@ pub fn pane_action(action: ConfigAction, viewer: &mut Viewer, app: &mut App) {
             return;
         }
         ConfigAction::GoToTag => {
-            let found = app.notes.editor.as_ref().map(|editor| {
+            let found = app.notes.terminal.as_ref().map(|editor| {
                 let (col, row) = editor.cursor_point();
                 tags::nearest_tag(&editor.text(), row as usize, col as usize)
             });
@@ -652,7 +646,7 @@ pub fn pane_action(action: ConfigAction, viewer: &mut Viewer, app: &mut App) {
 }
 
 /* A key while the notes panel has the keys. The notes keys with Ctrl or Alt in
- * `global` work here too; any other key goes to the picker or the editor. */
+ * `global` work here too; any other key goes to the terminal. */
 pub fn handle_notes_key(
     key: KeyEvent,
     global: &mut Keybinds<ConfigAction>,
@@ -670,31 +664,9 @@ pub fn handle_notes_key(
     }
 
     app.message = None;
-    if let Some(picker) = &mut app.notes.picker {
-        let visible = ui::picker_visible(editor_size().rows + 2);
-        match picker.key(key, visible) {
-            PickerKey::Handled => (),
-            PickerKey::Close => {
-                app.notes.picker = None;
-                if app.notes.editor.is_none() {
-                    app.notes.hide();
-                    apply_layout(viewer, app);
-                }
-            }
-            PickerKey::Chosen(choice) => choose_note(choice, viewer, app),
-        }
-        return;
+    if let Some(pane) = app.notes.terminal.as_mut() {
+        pane.key(&key);
     }
-    if let Some(editor) = &mut app.notes.editor {
-        editor.key(&key);
-    }
-}
-
-fn choose_note(choice: crate::notes::picker::Choice, viewer: &mut Viewer, app: &mut App) {
-    if let Err(e) = app.notes.chosen(choice, editor_size()) {
-        app.message = Some(e);
-    }
-    apply_layout(viewer, app);
 }
 
 /* The cell of the editor under `x`, `y` in pixels, when that's over the notes panel */
@@ -737,10 +709,9 @@ pub fn notes_mouse(mouse: &mut MouseEvent, viewer: &mut Viewer, app: &mut App) -
         }
         /* Ctrl-click on a page tag in the note goes there */
         (MouseEventKind::Down(_), Some((col, row)), true)
-            if mouse.modifiers.contains(KeyModifiers::CONTROL)
-                && app.notes.picker.is_none() =>
+            if mouse.modifiers.contains(KeyModifiers::CONTROL) =>
         {
-            let page = app.notes.editor.as_ref().and_then(|editor| {
+            let page = app.notes.terminal.as_ref().and_then(|editor| {
                 let text = editor.text();
                 tags::tag_at(text.get(row as usize)?, col as usize)
             });
@@ -751,16 +722,8 @@ pub fn notes_mouse(mouse: &mut MouseEvent, viewer: &mut Viewer, app: &mut App) -
             true
         }
         (kind, Some((col, row)), true) => {
-            if let Some(picker) = &mut app.notes.picker {
-                if matches!(kind, MouseEventKind::Down(_)) {
-                    let visible = ui::picker_visible(editor_size().rows + 2);
-                    if let PickerKey::Chosen(choice) = picker.click(row as usize, visible)
-                    {
-                        choose_note(choice, viewer, app);
-                    }
-                }
-            } else if let Some(editor) = &mut app.notes.editor {
-                editor.mouse(kind, mouse.modifiers, col, row);
+            if let Some(pane) = app.notes.terminal.as_mut() {
+                pane.mouse(kind, mouse.modifiers, col, row);
             }
             mouse.kind = MouseEventKind::Moved;
             true
@@ -768,8 +731,8 @@ pub fn notes_mouse(mouse: &mut MouseEvent, viewer: &mut Viewer, app: &mut App) -
         /* A drag that leaves the panel still belongs to the editor */
         (MouseEventKind::Drag(_) | MouseEventKind::Up(_), None, true) => {
             let (col, row) = (0, 0);
-            if let Some(editor) = &mut app.notes.editor {
-                editor.mouse(mouse.kind, mouse.modifiers, col, row);
+            if let Some(pane) = app.notes.terminal.as_mut() {
+                pane.mouse(mouse.kind, mouse.modifiers, col, row);
             }
             mouse.kind = MouseEventKind::Moved;
             true

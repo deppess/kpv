@@ -21,7 +21,7 @@ use crate::outline::{breadcrumb, current_section};
 use crate::state::*;
 use crate::theme::{paint, Slot};
 use crate::threads::renderer::{page_color, Renderer};
-use crate::ui::{self, inner, toc_visible, viewport, NotesBody, Segment, TocRow};
+use crate::ui::{self, inner, toc_visible, viewport, Segment, TocRow};
 use crate::viewer::*;
 
 pub fn write_error(e: io::Error) -> String {
@@ -178,22 +178,6 @@ fn tints(app: &App) -> Vec<Tint> {
             graphics::PANEL_Z,
             rect,
         );
-        if let Some(picker) = &app.notes.picker {
-            let row = picker.selected.checked_sub(picker.scroll);
-            if let Some(row) = row.filter(|&r| r < ui::picker_visible(rect.3)) {
-                add(
-                    Slot::NotesSelected,
-                    graphics::NOTES_SELECTED_TINT_ID,
-                    graphics::SELECTED_Z,
-                    (
-                        rect.0 + 1,
-                        rect.1 + 1 + row as u16,
-                        rect.2.saturating_sub(2),
-                        1,
-                    ),
-                );
-            }
-        }
     }
     if let Some(layer) = &app.layer {
         add(
@@ -206,54 +190,27 @@ fn tints(app: &App) -> Vec<Tint> {
     tints
 }
 
-/* The notes panel: the note picker or the editor's screen */
+/* The notes panel: the terminal, titled as its program titles it */
 fn draw_notes(app: &App) -> io::Result<()> {
     let rect = ui::notes_rect(&ui::inner(), ui::notes_percent());
-    let notes = &app.notes;
-    let title = match (&notes.picker, &notes.note) {
-        (None, Some(note)) => note
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        _ => "Notes".to_owned(),
-    };
-    if let Some(picker) = &notes.picker {
-        let visible = ui::picker_visible(rect.3);
-        let rows: Vec<_> = picker
-            .rows()
-            .into_iter()
-            .skip(picker.scroll)
-            .take(visible)
-            .collect();
-        let footer = match (&picker.naming, picker.filter.is_empty()) {
-            (Some(name), _) => format!("Name: {}▏ · ⏎ make it · Esc back", name),
-            (None, false) => format!("{}▏ · ⏎ open · Esc clears", picker.filter),
-            (None, true) => "type to find a note · ⏎ open · Esc close".to_owned(),
-        };
-        return ui::draw_notes(
-            rect,
-            &title,
-            notes.focused,
-            NotesBody::Picker(&rows, footer),
-        );
-    }
-    let Some(editor) = &notes.editor else {
+    let Some(terminal) = &app.notes.terminal else {
         return Ok(());
     };
-    let screen = editor.screen(
+    let title = terminal.title.clone().unwrap_or_else(|| "Notes".to_owned());
+    let screen = terminal.screen(
         paint(Slot::NotesText).color(),
         ui::background(Slot::NotesBackground),
     );
-    ui::draw_notes(rect, &title, notes.focused, NotesBody::Editor(&screen))
+    ui::draw_notes(rect, &title, app.notes.focused, &screen)
 }
 
 /* Where to show the editor's cursor, and how, while the note has the keys */
 fn editor_cursor(app: &App) -> Option<(u16, u16, SetCursorStyle)> {
     let notes = &app.notes;
-    if !(notes.open && notes.focused) || notes.picker.is_some() || app.layer.is_some() {
+    if !(notes.open && notes.focused) || app.layer.is_some() {
         return None;
     }
-    let (col, row, shape) = notes.editor.as_ref()?.cursor()?;
+    let (col, row, shape) = notes.terminal.as_ref()?.cursor()?;
     let (left, top, width, height) = ui::notes_rect(&ui::inner(), ui::notes_percent());
     if col + 2 >= width || row + 2 >= height {
         return None;
@@ -273,7 +230,6 @@ pub fn send_tints() {
         (Slot::ContentsSelected, graphics::SELECTED_TINT_ID),
         (Slot::HelpBackground, graphics::HELP_TINT_ID),
         (Slot::NotesBackground, graphics::NOTES_TINT_ID),
-        (Slot::NotesSelected, graphics::NOTES_SELECTED_TINT_ID),
         (Slot::LayerBackground, graphics::LAYER_TINT_ID),
     ] {
         let p = paint(slot);

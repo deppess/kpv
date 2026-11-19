@@ -42,8 +42,8 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 | `Ctrl-r` | Dark pages: paper and text in the theme's `pages.dark_background` and `pages.dark_text`, colors keeping their hue |
 | `Ctrl-a` | Transparent page background |
 | `?` | Every key from your config, grouped, with the keys of the panels and the `:` commands; `j`/`k`, `d`/`u`, `g`/`G` and the mouse wheel scroll, `q` closes |
-| `Ctrl-h` / `Ctrl-l` | The note / the PDF (see [Notes](#notes)) |
-| `Ctrl-Space` | The notes layer: `p` tag this page in the note, `g` go to the page tagged there, `x` hide the note, `s` switch notes, `c` new note |
+| `Ctrl-h` / `Ctrl-l` | The notes terminal / the PDF (see [Notes](#notes)) |
+| `Ctrl-Space` | The notes layer: `p` tag this page in the note, `g` go to the page tagged there, `x` hide the notes terminal |
 | `Ctrl-=` / `Ctrl--` | The note wider / narrower, and the pages narrower / wider; kept for next time |
 | `q`, `:q` | Quit |
 
@@ -89,13 +89,13 @@ The mouse wheel scrolls the panel. Clicking an entry goes there, and clicking it
 
 ## Notes
 
-`Ctrl-h` opens a note beside the PDF, in your editor (helix by default) running in a panel on the left, and the pages move over to the right. The first time, it asks which note: a new one named after the PDF (the title stored in it, or else its file name), one you name, or any note in your vault, which typing filters. A new note starts from your template with a link back to the PDF; the PDF remembers its note, and opens it straight away after that, at its end.
+`Ctrl-h` opens a terminal beside the PDF, in a panel on the left, and the pages move over to the right. It runs your shell, the one you log in with, starting in the notes folder, and anything runs in it as in any terminal: helix, yazi, git. It keeps running while hidden, so it comes back as you left it; `exit` closes the panel.
 
-`Ctrl-l` goes back to the PDF and `Ctrl-h` to the note again; a click on either side does the same. While the note has the keys, every key goes to the editor except `Ctrl-h`, `Ctrl-l`, `Ctrl-=`, `Ctrl--` and `Ctrl-Space`, which shows the notes layer: `x` hides the note, `s` switches to another note, `c` makes a new one with a name you type. The mouse wheel scrolls whichever side it's over. The contents panel opens beside the note, at the left of the pages.
+`Ctrl-l` goes back to the PDF and `Ctrl-h` to the terminal again; a click on either side does the same. While the terminal has the keys, every key goes to it except `Ctrl-h`, `Ctrl-l`, `Ctrl-=` and `Ctrl--` (the panel wider and narrower) and `Ctrl-Space`, which shows the notes layer: `p` tags the page, `g` goes to a tagged page, `x` hides the panel. The mouse wheel scrolls whichever side it's over. The contents panel opens beside the terminal, at the left of the pages.
 
-`Ctrl-Space p` writes a tag for the page you're reading at the editor's cursor, such as `(p. 45)`, with the number printed on the page (`(p. xiv)` in the front matter). In the note, `Ctrl-Space g` moves the PDF to the tag on the cursor's line, or else to the nearest one above it, and Ctrl-click on a tag goes there too. Tags you type yourself work the same: `p. 45`, `p.45`, `pp. 45-47`.
+viewmer adds two commands to the terminal. `hx` there is your helix with saving when focus leaves the panel, and a second after typing stops: going back to the PDF, hiding the panel, leaving the terminal window, quitting or closing the window saves the note. yazi opens notes with `hx` too. `pdfnote` opens the note named after the PDF (its stored title, or else its file name), making it from your template with a link back to the PDF if the vault doesn't have it yet, at its end; `pdfnote Some name` opens or makes the note called that.
 
-The note is saved whenever you leave it: going back to the PDF, hiding it, leaving the terminal window, quitting, or closing the window. viewmer starts helix with your own config plus saving on losing focus, and from the vault folder, so its settings for the vault apply. Hiding the note keeps the editor running, so it comes back as you left it; `:q` in the editor closes the panel. If the PDF moves and comes back under its permanent ID, the link in its note moves along.
+`Ctrl-Space p` writes a tag for the page you're reading where the terminal's cursor is, such as `(p. 45)`, with the number printed on the page (`(p. xiv)` in the front matter). `Ctrl-Space g` moves the PDF to the tag on the cursor's line, or else to the nearest one above it, and Ctrl-click on a tag goes there too. Tags you type yourself work the same: `p. 45`, `p.45`, `pp. 45-47`, and `p. #30` for the 30th page of the file.
 
 ## Search
 
@@ -106,9 +106,9 @@ Search ignores case. It runs alongside the pages, so they keep drawing and scrol
 The config is created on first run at `~/.config/viewmer/config.toml` (or under `$XDG_CONFIG_HOME` when that is set), with a line about each setting. A config and theme from earlier versions, kept in `~/Library/Application Support/viewmer` on macOS, move there on their own:
 
 - `[viewer]`: `scroll_step`, `zoom_step` (percent of the page width), `resolution` (pages are drawn at the screen's own resolution times this, again whenever the zoom changes, so they stay sharp when zoomed in; zoomed far in, the part in view is drawn sharp and the pages around it coarser until you get to them, so any zoom fits in the memory kitty keeps for images), `page_gap`, `invert_wheel`, `link_hints` (where a hovered link points) and `remember_position`.
-- `[notes]`: `vault` (the notes folder, where the editor starts), `folder` (where new notes go, inside the vault), `editor`, `template` (`{{title}}` becomes the note's name and `{{source}}` the link to the PDF; without `{{source}}`, the link goes on a `Links:` line or after the title) and `width` (percent of the window).
+- `[notes]`: `vault` (the notes folder), `folder` (where new notes go, inside the vault, and where the terminal starts), `shell` (empty for the one you log in with), `editor` (what `pdfnote` opens), `template` (`{{title}}` becomes the note's name and `{{source}}` the link to the PDF; without `{{source}}`, the link goes on a `Links:` line or after the title) and `width` (percent of the window).
 - `[layers]`: `"keys" = "Name"`. Typing the keys of a layer shows a box with what can follow them.
-- `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `SetMark`, `GoToMark`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `HalfPageDown`, `HalfPageUp`, `ZoomIn`, `ZoomOut`, `FitWidth`, `FitPage`, `CenterViewer`, `ToggleRuler`, `ToggleInverse`, `ToggleAlpha`, `FocusNote`, `FocusPdf`, `HideNote`, `SwitchNote`, `NewNote`, `ShowHelp` and `Quit`. The notes actions bound with Ctrl or Alt also work while the note has the keys.
+- `[bindings]`: `"key" = "Action"`. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `SetMark`, `GoToMark`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `HalfPageDown`, `HalfPageUp`, `ZoomIn`, `ZoomOut`, `FitWidth`, `FitPage`, `CenterViewer`, `ToggleRuler`, `ToggleInverse`, `ToggleAlpha`, `FocusNote`, `FocusPdf`, `HideNote`, `WidenNote`, `NarrowNote`, `TagPage`, `GoToTag`, `ShowHelp` and `Quit`. The notes actions bound with Ctrl or Alt also work while the note has the keys.
 
 A config from an older version is brought up to date when viewmer starts: renamed settings keep their values under the new names, settings that are gone are removed, new ones come in with their explanation, and your own comments and order stay. A key whose default moved, such as `Ctrl-o` going from inverting colors to jumping back, moves along when the config still has it as shipped; a key you changed stays as you set it.
 
@@ -116,7 +116,7 @@ A config from an older version is brought up to date when viewmer starts: rename
 
 Colors are in `theme.toml` next to the config, written on first run with every color and what it's for. A color can be `"#1e2030"`, `"#fff"`, `"rgb(30, 32, 48)"`, `"hsl(230, 23%, 15%)"`, a palette number like `8`, a name like `"cyan"` or `"bright-black"`, or `"default"` for the terminal's own color.
 
-Panel backgrounds (`contents.background`, `contents.selected`, `help.background`, `notes.background`, `notes.selected`, `layer.background`) and the colors painted on pages (`pages.match`, `pages.current_match`, `pages.ruler`) can be see-through: add two hex digits of opacity, from `00` (clear) to `ff` (solid), as in `"#1e2030cc"`. The page then shows through the panel. A page color without them is mixed in at a strength that keeps the text readable.
+Panel backgrounds (`contents.background`, `contents.selected`, `help.background`, `notes.background`, `layer.background`) and the colors painted on pages (`pages.match`, `pages.current_match`, `pages.ruler`) can be see-through: add two hex digits of opacity, from `00` (clear) to `ff` (solid), as in `"#1e2030cc"`. The page then shows through the panel. A page color without them is mixed in at a strength that keeps the text readable.
 
 A mistake in the file doesn't stop viewmer: that color keeps its default, and the status bar says what's wrong.
 
@@ -144,7 +144,7 @@ cargo clippy --all-features -- -D clippy::all
 cargo test --all-features -- --test-threads 1
 ```
 
-The tests cover the page placement and clipping math, which images a frame places again, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, moving retired default keys, key and prompt handling, search stepping, the help list, reading colors and the theme file, encoding keys, the mouse and pastes for the editor, running a program in the notes panel, naming notes and writing them from a template, the note picker, finding page tags, reading printed page numbers off the pages, the config merge and upgrade, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
+The tests cover the page placement and clipping math, which images a frame places again, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, moving retired default keys, key and prompt handling, search stepping, the help list, reading colors and the theme file, encoding keys, the mouse and pastes for the editor, running a program in the notes panel, naming notes and writing them from a template, finding page tags, reading printed page numbers off the pages, the config merge and upgrade, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
 
 ## License
 

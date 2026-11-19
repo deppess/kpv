@@ -14,7 +14,7 @@ use crossterm::{
 use std::sync::atomic::{AtomicU16, Ordering};
 
 use crate::globals::TERMINAL_SIZE;
-use crate::notes::{pane::Cell, picker::PickerRow};
+use crate::notes::pane::Cell;
 use crate::state::HelpItem;
 use crate::theme::{paint, Slot};
 
@@ -589,21 +589,13 @@ fn draw_toc_row(out: &mut io::Stdout, row: &TocRow, inner: usize) -> io::Result<
     )
 }
 
-/* What the notes panel shows */
-pub enum NotesBody<'a> {
-    /* The editor's screen */
-    Editor(&'a [Vec<Cell>]),
-    /* The note picker: its visible rows and the line under them */
-    Picker(&'a [PickerRow], String),
-}
-
 /* Draws the notes panel at `rect` with `title` in its top edge; its border is bright
  * while it has the keys */
 pub fn draw_notes(
     rect: (u16, u16, u16, u16),
     title: &str,
     focused: bool,
-    body: NotesBody,
+    screen: &[Vec<Cell>],
 ) -> io::Result<()> {
     let (left, top, width, height) = rect;
     if width < 4 || height < 3 {
@@ -643,28 +635,9 @@ pub fn draw_notes(
             Print("│"),
             ResetColor,
         )?;
-        match &body {
-            NotesBody::Editor(screen) => match screen.get(row as usize) {
-                Some(cells) => draw_cells(&mut out, cells, inner)?,
-                None => queue!(out, SetBackgroundColor(bg), Print(" ".repeat(inner)))?,
-            },
-            NotesBody::Picker(rows, footer) => {
-                let last = row == height - 3;
-                if last {
-                    let text = truncate(footer, inner.saturating_sub(2));
-                    let pad = inner.saturating_sub(columns(&text) + 1);
-                    queue!(
-                        out,
-                        SetBackgroundColor(bg),
-                        SetForegroundColor(color(Slot::NotesMuted)),
-                        Print(" "),
-                        Print(&text),
-                        Print(" ".repeat(pad)),
-                    )?;
-                } else {
-                    draw_picker_row(&mut out, rows.get(row as usize), inner)?;
-                }
-            }
+        match screen.get(row as usize) {
+            Some(cells) => draw_cells(&mut out, cells, inner)?,
+            None => queue!(out, SetBackgroundColor(bg), Print(" ".repeat(inner)))?,
         }
         queue!(
             out,
@@ -738,52 +711,6 @@ fn draw_cells(out: &mut io::Stdout, cells: &[Cell], width: usize) -> io::Result<
         )?;
     }
     Ok(())
-}
-
-fn draw_picker_row(
-    out: &mut io::Stdout,
-    row: Option<&PickerRow>,
-    width: usize,
-) -> io::Result<()> {
-    let Some(row) = row else {
-        return queue!(
-            out,
-            SetBackgroundColor(background(Slot::NotesBackground)),
-            Print(" ".repeat(width))
-        );
-    };
-    let bg = background(if row.selected {
-        Slot::NotesSelected
-    } else {
-        Slot::NotesBackground
-    });
-    let hint = truncate(&row.hint, width / 3);
-    let room = width.saturating_sub(columns(&hint) + 3);
-    let label = truncate(&row.label, room);
-    let pad = room - columns(&label);
-    queue!(
-        out,
-        SetBackgroundColor(bg),
-        SetForegroundColor(color(Slot::NotesText)),
-        Print(" ")
-    )?;
-    if row.selected {
-        queue!(out, SetAttribute(Attribute::Bold))?;
-    }
-    queue!(
-        out,
-        Print(&label),
-        SetAttribute(Attribute::NormalIntensity),
-        Print(" ".repeat(pad + 1)),
-        SetForegroundColor(color(Slot::NotesMuted)),
-        Print(&hint),
-        Print(" "),
-    )
-}
-
-/* Rows of the picker's list in a notes panel `height` cells high */
-pub fn picker_visible(height: u16) -> usize {
-    (height as usize).saturating_sub(3).max(1)
 }
 
 /* A layer's name and what its keys do */

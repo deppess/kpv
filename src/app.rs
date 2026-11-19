@@ -259,7 +259,7 @@ pub fn open_store(file: &str, id: Option<String>, viewer: &mut Viewer, app: &mut
 /* Lays the window out as it was: the note open first, since the zoom is kept relative
  * to the width the pages had beside it */
 fn restore_layout(layout: &Layout, viewer: &mut Viewer, app: &mut App) {
-    if layout.notes && app.notes.remembered.as_ref().is_some_and(|n| n.is_file()) {
+    if layout.notes {
         if app.notes.focus(editor_size()).is_ok() && !layout.notes_focused {
             app.notes.unfocus();
         }
@@ -436,8 +436,8 @@ pub fn apply_layout(viewer: &mut Viewer, app: &mut App) {
         viewer.refit();
     }
     let size = editor_size();
-    if let Some(editor) = &mut app.notes.editor {
-        editor.resize(size.cols, size.rows, size.pixels);
+    if let Some(terminal) = &mut app.notes.terminal {
+        terminal.resize(size.cols, size.rows, size.pixels);
     }
 }
 

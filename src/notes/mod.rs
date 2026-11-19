@@ -1,28 +1,27 @@
-/* The notes panel: an editor beside the PDF, on the note that belongs to it */
+/* The notes panel: a terminal beside the PDF, running the shell, where any program
+ * runs as in any terminal (helix, yazi). viewmer adds a little to it: `hx` there saves
+ * when focus leaves the panel, `pdfnote` opens the note named after the PDF, and page
+ * tags go in and out of what it shows. */
 
 pub mod keys;
 pub mod note;
 pub mod pane;
-pub mod picker;
 pub mod tags;
 
 use std::{
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
 };
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
 use crate::{config::ConfigNotes, globals::CONFIG, store::Store};
 use note::{
-    create_note, expand_home, find_note, helix_config, is_helix, last_line, list_notes,
-    new_note, note_name, pdf_link,
+    create_note, expand_home, find_note, helix_config, new_note, note_name, pdf_link,
 };
 use pane::Pane;
-use picker::{Choice, Picker};
 
-/* The editor's screen: cells across and down, and its size in pixels */
+/* The terminal's screen: cells across and down, and its size in pixels */
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EditorSize {
     pub cols: u16,
@@ -36,15 +35,11 @@ pub struct Notes {
     /* Keys go to the panel */
     pub focused: bool,
     /* Runs on after the panel hides, so it comes back as it was */
-    pub editor: Option<Pane>,
-    /* The note in the editor */
-    pub note: Option<PathBuf>,
-    /* Shown instead of the editor while a note is being chosen */
-    pub picker: Option<Picker>,
+    pub terminal: Option<Pane>,
     pdf: PathBuf,
     /* The title stored in the PDF */
     pub title: Option<String>,
-    /* The note this PDF had last time */
+    /* The note kept with this PDF in its state, whose link to the PDF follows it */
     pub remembered: Option<PathBuf>,
 }
 
@@ -56,197 +51,248 @@ pub fn vault() -> PathBuf {
     expand_home(&settings().vault)
 }
 
+/* Where new notes go, and where the terminal starts */
+pub fn notes_folder() -> PathBuf {
+    let vault = vault();
+    match settings().folder.trim() {
+        "" => vault,
+        folder => vault.join(folder),
+    }
+}
+
 impl Notes {
     pub fn new(pdf: &Path) -> Self {
         Self {
             open: false,
             focused: false,
-            editor: None,
-            note: None,
-            picker: None,
+            terminal: None,
             pdf: std::fs::canonicalize(pdf).unwrap_or_else(|_| pdf.to_path_buf()),
             title: None,
             remembered: None,
         }
     }
 
-    /* The note's name made from the PDF */
-    pub fn suggested_name(&self) -> String {
-        let stem = self
-            .pdf
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        note_name(self.title.as_deref(), &stem)
-    }
-
-    fn picker(&self) -> Picker {
-        let vault = vault();
-        let name = self.suggested_name();
-        Picker::new(&vault, &name, find_note(&vault, &name), list_notes(&vault))
-    }
-
-    /* Opens the panel and gives it the keys: the editor if it runs, else the note the
-     * PDF had last time, else the picker */
+    /* Opens the panel and gives it the keys, starting the shell the first time */
     pub fn focus(&mut self, size: EditorSize) -> Result<(), String> {
         self.open = true;
         self.focused = true;
-        if self.picker.is_some() {
-            return Ok(());
+        match &mut self.terminal {
+            Some(terminal) => terminal.focus(true),
+            None => self.start(size)?,
         }
-        if let Some(editor) = &mut self.editor {
-            editor.focus(true);
-            return Ok(());
-        }
-        match self.remembered.clone().filter(|p| p.is_file()) {
-            Some(path) => self.start(&path, size),
-            None => {
-                self.picker = Some(self.picker());
-                Ok(())
-            }
-        }
+        Ok(())
     }
 
-    /* Gives the keys back to the PDF; the editor saves on losing focus */
+    /* Gives the keys back to the PDF; helix in the panel saves on losing focus */
     pub fn unfocus(&mut self) {
         if !self.focused {
             return;
         }
         self.focused = false;
-        if let Some(editor) = &mut self.editor {
-            editor.focus(false);
+        if let Some(terminal) = &mut self.terminal {
+            terminal.focus(false);
         }
     }
 
-    /* Hides the panel; the editor runs on, saved */
+    /* Hides the panel; what runs in it goes on, saved */
     pub fn hide(&mut self) {
         self.unfocus();
         self.open = false;
-        self.picker = None;
     }
 
-    /* Shows the picker to choose another note, or with `naming` to name a new one */
-    pub fn choose_another(&mut self, naming: bool) {
-        let picker = self.picker();
-        self.picker = Some(if naming { picker.naming() } else { picker });
-        self.open = true;
-        self.focused = true;
-    }
-
-    /* Opens what the picker chose, making a new note first if it was one. Returns the
-     * note, to remember for this PDF. */
-    pub fn chosen(
-        &mut self,
-        choice: Choice,
-        size: EditorSize,
-    ) -> Result<PathBuf, String> {
-        self.picker = None;
-        let path = match choice {
-            Choice::Open(path) => path,
-            Choice::New(name) => {
-                let vault = vault();
-                match find_note(&vault, &name) {
-                    /* Links find notes by name, so a name is used once */
-                    Some(existing) => existing,
-                    None => {
-                        let path =
-                            vault.join(&settings().folder).join(format!("{}.md", name));
-                        let template = match settings().template.trim() {
-                            "" => None,
-                            file => {
-                                Some(std::fs::read_to_string(expand_home(file)).map_err(
-                                    |x| {
-                                        format!(
-                                            "Could not read the note template {}: {}",
-                                            file, x
-                                        )
-                                    },
-                                )?)
-                            }
-                        };
-                        let link = pdf_link(&self.suggested_name(), &self.pdf);
-                        create_note(&path, &new_note(template.as_deref(), &name, &link))?;
-                        path
-                    }
-                }
-            }
+    fn start(&mut self, size: EditorSize) -> Result<(), String> {
+        let shell = match settings().shell.trim() {
+            "" => login_shell(),
+            shell => shell.to_owned(),
         };
-        if self.note.as_ref() != Some(&path) || self.editor.is_none() {
-            self.close_editor();
-            self.start(&path, size)?;
+        let folder = notes_folder();
+        let cwd = if folder.is_dir() {
+            folder
+        } else {
+            dirs::home_dir().unwrap_or_default()
+        };
+        let mut env = vec![("VIEWMER_PDF".to_owned(), self.pdf.display().to_string())];
+        let mut args = Vec::new();
+        if let Some(bin) = write_helpers() {
+            let path = std::env::var("PATH").unwrap_or_default();
+            env.push(("PATH".to_owned(), format!("{}:{}", bin.display(), path)));
+            /* fish puts its own paths first while it starts; put the helpers back in front */
+            if shell.ends_with("fish") {
+                args.push("-C".to_owned());
+                args.push(format!(
+                    "set -gx PATH {} $PATH",
+                    quote(&bin.display().to_string())
+                ));
+            }
         }
-        self.remembered = Some(path.clone());
-        Ok(path)
-    }
-
-    fn start(&mut self, path: &Path, size: EditorSize) -> Result<(), String> {
-        let editor = settings().editor.trim();
-        let editor = if editor.is_empty() { "hx" } else { editor };
-        let text = std::fs::read_to_string(path).unwrap_or_default();
-        let args = if is_helix(editor) {
-            let mut args = Vec::new();
-            if let Some(config) = write_helix_config() {
-                args.push("-c".to_owned());
-                args.push(config.to_string_lossy().into_owned());
-            }
-            args.push(format!("{}:{}", path.display(), last_line(&text)));
-            args
-        } else {
-            vec![path.to_string_lossy().into_owned()]
-        };
-        let vault = vault();
-        let cwd = if vault.is_dir() {
-            vault
-        } else {
-            path.parent().map(Path::to_path_buf).unwrap_or_default()
-        };
         let mut pane =
-            Pane::spawn(editor, &args, &cwd, size.cols, size.rows, size.pixels)?;
+            Pane::spawn(&shell, &args, &cwd, size.cols, size.rows, size.pixels, &env)?;
         pane.focus(self.focused);
-        self.editor = Some(pane);
-        self.note = Some(path.to_path_buf());
+        self.terminal = Some(pane);
         Ok(())
     }
 
-    /* Saves and quits the editor, waiting a little for it; one that won't quit is
-     * stopped */
-    pub fn close_editor(&mut self) {
-        let Some(mut editor) = self.editor.take() else {
+    /* On quitting: tells what runs in the panel that focus left, so helix saves, gives
+     * it a moment, and ends it */
+    pub fn close(&mut self) {
+        let Some(mut terminal) = self.terminal.take() else {
             return;
         };
-        self.note = None;
-        if is_helix(&settings().editor) {
-            let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-            editor.key(&esc);
-            editor.key(&esc);
-            editor.send(b":write-quit-all\r");
-        }
-        let end = Instant::now() + Duration::from_secs(2);
-        while !editor.exited() && Instant::now() < end {
-            editor.take_output();
+        terminal.focus(false);
+        let end = Instant::now() + Duration::from_millis(400);
+        while !terminal.exited() && Instant::now() < end {
+            terminal.take_output();
             thread::sleep(Duration::from_millis(10));
         }
-        if !editor.exited() {
-            editor.kill();
-        }
+        terminal.kill();
     }
 
-    /* After the editor quit by itself (`:q`): the panel closes */
-    pub fn editor_ended(&mut self) {
-        self.editor = None;
-        self.note = None;
+    /* The shell ended (`exit`): the panel closes */
+    pub fn ended(&mut self) {
+        self.terminal = None;
         self.open = false;
         self.focused = false;
     }
 }
 
-/* The config for the helix in the panel: the user's, saving on losing focus */
-fn write_helix_config() -> Option<PathBuf> {
-    let user = dirs::home_dir()?.join(".config/helix/config.toml");
-    let text = helix_config(std::fs::read_to_string(user).ok().as_deref());
+/* The shell the account logs in with, then $SHELL, then sh */
+fn login_shell() -> String {
+    let from_account = unsafe {
+        let entry = libc::getpwuid(libc::getuid());
+        if entry.is_null() || (*entry).pw_shell.is_null() {
+            None
+        } else {
+            std::ffi::CStr::from_ptr((*entry).pw_shell)
+                .to_str()
+                .ok()
+                .map(str::to_owned)
+        }
+    };
+    from_account
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("SHELL").ok())
+        .unwrap_or_else(|| "/bin/sh".to_owned())
+}
+
+/* The note's name for a PDF: the title stored in it, or else its file name */
+pub fn suggested_name(pdf: &Path, title: Option<&str>) -> String {
+    let stem = pdf
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    note_name(title, &stem)
+}
+
+/* The note named `name` (or after the PDF): the one the vault has, wherever it is,
+ * since links find notes by name, or else a new one in the notes folder from the
+ * template with a link back to the PDF. Returns where it is. */
+pub fn note_for(
+    pdf: &Path,
+    title: Option<&str>,
+    name: Option<&str>,
+) -> Result<PathBuf, String> {
+    let suggested = suggested_name(pdf, title);
+    let name = name
+        .map(|n| n.trim().trim_end_matches(".md").trim().to_owned())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| suggested.clone());
+    if let Some(existing) = find_note(&vault(), &name) {
+        return Ok(existing);
+    }
+    let path = notes_folder().join(format!("{}.md", name));
+    let template =
+        match settings().template.trim() {
+            "" => None,
+            file => Some(std::fs::read_to_string(expand_home(file)).map_err(|x| {
+                format!("Could not read the note template {}: {}", file, x)
+            })?),
+        };
+    let link = pdf_link(&suggested, pdf);
+    create_note(&path, &new_note(template.as_deref(), &name, &link))?;
+    Ok(path)
+}
+
+/* The commands the panel's shell finds first: `hx` with saving on losing focus, and
+ * `pdfnote`. Returns their folder. */
+fn write_helpers() -> Option<PathBuf> {
     let dir = Store::default_dir()?;
-    std::fs::create_dir_all(&dir).ok()?;
-    let path = dir.join("helix.toml");
-    std::fs::write(&path, text).ok()?;
-    Some(path)
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).ok()?;
+
+    let editor = match settings().editor.trim() {
+        "" => "hx".to_owned(),
+        editor => editor.to_owned(),
+    };
+    let mut scripts = Vec::new();
+    /* helix itself, past this folder in the PATH */
+    if note::is_helix(&editor) {
+        if let Some(real) = find_program(&editor, &bin) {
+            let user = dirs::home_dir()?.join(".config/helix/config.toml");
+            let config = dir.join("helix.toml");
+            std::fs::write(
+                &config,
+                helix_config(std::fs::read_to_string(user).ok().as_deref()),
+            )
+            .ok()?;
+            scripts.push((
+                "hx".to_owned(),
+                format!(
+                    "#!/bin/sh\n# helix in viewmer's notes panel: it saves when focus leaves the panel\nexec {} -c {} \"$@\"\n",
+                    quote(&real.display().to_string()),
+                    quote(&config.display().to_string())
+                ),
+            ));
+        }
+    }
+    let viewmer = std::env::current_exe().ok()?;
+    scripts.push((
+        "pdfnote".to_owned(),
+        format!(
+            "#!/bin/sh\n# Opens the note named after the PDF in viewmer, or the one named \"$*\",\n# making it from the template first, at its end\nnote=$({} --note \"$VIEWMER_PDF\" \"$@\") || exit 1\n{}\n",
+            quote(&viewmer.display().to_string()),
+            if note::is_helix(&editor) {
+                format!(
+                    "exec {} \"$note:$(($(wc -l < \"$note\") + 1))\"",
+                    quote(&editor)
+                )
+            } else {
+                format!("exec {} \"$note\"", quote(&editor))
+            }
+        ),
+    ));
+    for (name, text) in scripts {
+        let path = bin.join(name);
+        std::fs::write(&path, text).ok()?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).ok()?;
+    }
+    Some(bin)
+}
+
+/* Where `program` is in the PATH, not counting `skip` */
+fn find_program(program: &str, skip: &Path) -> Option<PathBuf> {
+    if program.contains('/') {
+        return Some(PathBuf::from(program));
+    }
+    std::env::var_os("PATH")?
+        .to_string_lossy()
+        .split(':')
+        .map(PathBuf::from)
+        .filter(|dir| dir != skip)
+        .map(|dir| dir.join(program))
+        .find(|path| path.is_file())
+}
+
+/* `text` in single quotes for the shell */
+fn quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_quoting_survives_any_path() {
+        assert_eq!(quote("/a/PDF's/x"), "'/a/PDF'\\''s/x'");
+    }
 }

@@ -26,6 +26,7 @@ pub struct Config {
 pub struct ConfigNotes {
     pub vault: String,
     pub folder: String,
+    pub shell: String,
     pub editor: String,
     pub template: String,
     /* Percent of the window */
@@ -79,8 +80,6 @@ pub enum ConfigAction {
     FocusNote,
     FocusPdf,
     HideNote,
-    SwitchNote,
-    NewNote,
     WidenNote,
     NarrowNote,
     TagPage,
@@ -91,7 +90,7 @@ impl ConfigAction {
     /* Every action, for the tests that check each one has a key and a place in the
      * key list */
     #[cfg(test)]
-    pub const ALL: [ConfigAction; 39] = [
+    pub const ALL: [ConfigAction; 37] = [
         ConfigAction::MoveDown,
         ConfigAction::MoveUp,
         ConfigAction::MoveLeft,
@@ -123,8 +122,6 @@ impl ConfigAction {
         ConfigAction::FocusNote,
         ConfigAction::FocusPdf,
         ConfigAction::HideNote,
-        ConfigAction::SwitchNote,
-        ConfigAction::NewNote,
         ConfigAction::WidenNote,
         ConfigAction::NarrowNote,
         ConfigAction::TagPage,
@@ -140,8 +137,6 @@ impl ConfigAction {
             ConfigAction::FocusNote
                 | ConfigAction::FocusPdf
                 | ConfigAction::HideNote
-                | ConfigAction::SwitchNote
-                | ConfigAction::NewNote
                 | ConfigAction::WidenNote
                 | ConfigAction::NarrowNote
                 | ConfigAction::TagPage
@@ -179,11 +174,9 @@ impl ConfigAction {
             ConfigAction::FitPage => "Fit the whole page",
             ConfigAction::ToggleRuler => "Reading ruler on or off",
             ConfigAction::ToggleAlpha => "Transparent page background",
-            ConfigAction::FocusNote => "Go to the note, opening it",
+            ConfigAction::FocusNote => "Go to the notes terminal, opening it",
             ConfigAction::FocusPdf => "Go to the PDF",
-            ConfigAction::HideNote => "Hide the note (it's saved)",
-            ConfigAction::SwitchNote => "Switch to another note",
-            ConfigAction::NewNote => "New note with a name you type",
+            ConfigAction::HideNote => "Hide the notes terminal (helix saves)",
             ConfigAction::WidenNote => "Note wider, pages narrower",
             ConfigAction::NarrowNote => "Note narrower, pages wider",
             ConfigAction::TagPage => "Tag the page you're reading in the note",

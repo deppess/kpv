@@ -98,14 +98,28 @@ fn kitty(key: &KeyEvent, m: u8, mode: TermMode) -> Vec<u8> {
             if shift_only && !all {
                 return c.to_string().into_bytes();
             }
-            /* The key's own code: a lowercase letter, whatever Shift did to it */
+            /* The key's own code is the lowercase letter, whatever Shift did to it; the
+             * letter Shift made goes along when the program asks, and so does the text
+             * the key types */
             let base = c.to_lowercase().next().unwrap_or(c);
-            let m = if c.is_uppercase() {
+            let shifted = c != base;
+            let m = if shifted {
                 modifier_number(key.modifiers | KeyModifiers::SHIFT)
             } else {
                 m
             };
-            csi(base as u32, m, 'u')
+            let code = if shifted && mode.contains(TermMode::REPORT_ALTERNATE_KEYS) {
+                format!("{}:{}", base as u32, c as u32)
+            } else {
+                (base as u32).to_string()
+            };
+            let text = mode.contains(TermMode::REPORT_ASSOCIATED_TEXT) && shift_only;
+            match (text, m) {
+                (true, _) => format!("\x1b[{};{};{}u", code, m, c as u32),
+                (false, 1) => format!("\x1b[{}u", code),
+                (false, _) => format!("\x1b[{};{}u", code, m),
+            }
+            .into_bytes()
         }
         KeyCode::Enter if m == 1 && !all => b"\r".to_vec(),
         KeyCode::Tab if m == 1 && !all => b"\t".to_vec(),
@@ -277,6 +291,27 @@ mod tests {
         assert_eq!(kitty_key(KeyCode::Enter, NONE), "\r");
         assert_eq!(kitty_key(KeyCode::Tab, NONE), "\t");
         assert_eq!(kitty_key(KeyCode::Backspace, NONE), "\x7f");
+    }
+
+    #[test]
+    fn every_key_as_a_code_keeps_what_shift_made() {
+        let all = KITTY | TermMode::REPORT_ALL_KEYS_AS_ESC;
+        let encode = |code, mods, mode| {
+            String::from_utf8(encode_key(&key(code, mods), mode)).unwrap()
+        };
+        assert_eq!(encode(KeyCode::Char('f'), NONE, all), "\x1b[102u");
+        assert_eq!(encode(KeyCode::Char('F'), SHIFT, all), "\x1b[102;2u");
+        let alternate = all | TermMode::REPORT_ALTERNATE_KEYS;
+        assert_eq!(
+            encode(KeyCode::Char('F'), SHIFT, alternate),
+            "\x1b[102:70;2u"
+        );
+        let text = alternate | TermMode::REPORT_ASSOCIATED_TEXT;
+        assert_eq!(encode(KeyCode::Char('F'), SHIFT, text), "\x1b[102:70;2;70u");
+        assert_eq!(encode(KeyCode::Char('a'), NONE, text), "\x1b[97;1;97u");
+        /* A chord types no text */
+        assert_eq!(encode(KeyCode::Char('a'), CTRL, text), "\x1b[97;5u");
+        assert_eq!(encode(KeyCode::Enter, NONE, all), "\x1b[13u");
     }
 
     #[test]

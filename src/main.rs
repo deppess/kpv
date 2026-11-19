@@ -82,6 +82,22 @@ fn main() {
         }
         _ => (),
     }
+    /* `pdfnote` in the notes terminal: find or make a PDF's note and say where it is */
+    if arg == "--note" {
+        let args: Vec<String> = std::env::args().skip(2).collect();
+        let Some((pdf, name)) = args.split_first() else {
+            eprintln!("viewmer: --note needs the PDF");
+            std::process::exit(1);
+        };
+        match note_for(pdf, &name.join(" ")) {
+            Ok(path) => println!("{}", path.display()),
+            Err(e) => {
+                eprintln!("viewmer: {}", e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if !Path::new(&arg).is_file() {
         eprintln!("viewmer: no such file: {}", arg);
         std::process::exit(1);
@@ -254,9 +270,9 @@ fn main() {
         /* What the editor in the notes panel writes */
         let editor_output = app
             .notes
-            .editor
+            .terminal
             .as_ref()
-            .map(|e| e.output.clone())
+            .map(|pane| pane.output.clone())
             .unwrap_or_else(never);
         sel.recv(&editor_output);
 
@@ -344,14 +360,15 @@ fn main() {
                         }
                     }
                     InputEvent::Paste(text) if notes_keys => {
-                        if let Some(editor) = &mut app.notes.editor {
+                        if let Some(editor) = &mut app.notes.terminal {
                             editor.paste(&text);
                         }
                     }
                     InputEvent::Paste(_) => (),
                     /* Leaving the terminal window saves the note */
                     InputEvent::Focus(gained) => {
-                        if let (true, Some(editor)) = (notes_keys, &mut app.notes.editor)
+                        if let (true, Some(editor)) =
+                            (notes_keys, &mut app.notes.terminal)
                         {
                             editor.focus(gained);
                         }
@@ -399,15 +416,15 @@ fn main() {
             7 => break 'main,
             8 => match take(&editor_output) {
                 Taken(bytes) => {
-                    if let Some(editor) = &mut app.notes.editor {
-                        editor.feed(&bytes);
-                        editor.take_output();
+                    if let Some(pane) = app.notes.terminal.as_mut() {
+                        pane.feed(&bytes);
+                        pane.take_output();
                     }
                 }
                 Nothing => continue 'main,
-                /* The editor quit (`:q`): the panel closes */
+                /* The shell ended (`exit`): the panel closes */
                 Gone => {
-                    app.notes.editor_ended();
+                    app.notes.ended();
                     apply_layout(&mut viewer, &mut app);
                 }
             },
@@ -460,7 +477,7 @@ fn main() {
     }
 
     /* The note is saved and the editor quits before anything else goes */
-    app.notes.close_editor();
+    app.notes.close();
     if app.store.is_some() {
         app.save_due = Some((file_state(&viewer, &app), Instant::now()));
         save_state(&mut app);
@@ -496,6 +513,20 @@ fn reset_screen() {
         SetCursorStyle::DefaultUserShape,
         Show
     );
+}
+
+/* The note for `pdf`: the one named `name`, or else after the PDF's title or file name */
+fn note_for(pdf: &str, name: &str) -> Result<std::path::PathBuf, String> {
+    let mut config = config_load_or_create()?;
+    config.bindings = None;
+    CONFIG.get_or_init(|| config);
+    let title = mupdf::Document::open(pdf)
+        .ok()
+        .and_then(|d| d.metadata(mupdf::MetadataName::Title).ok())
+        .map(|t| t.trim().to_owned())
+        .filter(|t| real_title(t));
+    let name = Some(name).filter(|n| !n.trim().is_empty());
+    crate::notes::note_for(Path::new(pdf), title.as_deref(), name)
 }
 
 /* What the viewer says when the watcher started it again after a crash */

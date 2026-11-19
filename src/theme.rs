@@ -278,8 +278,6 @@ pub enum Slot {
     NotesBorderInactive,
     NotesTitle,
     NotesText,
-    NotesMuted,
-    NotesSelected,
     LayerBackground,
     LayerBorder,
     LayerTitle,
@@ -320,7 +318,7 @@ const fn spec(
     }
 }
 
-pub const SPECS: [Spec; 45] = [
+pub const SPECS: [Spec; 43] = [
     spec(
         Slot::FrameBorder,
         "frame",
@@ -577,22 +575,6 @@ pub const SPECS: [Spec; 45] = [
         "default",
         false,
         "The editor's own text color",
-    ),
-    spec(
-        Slot::NotesMuted,
-        "notes",
-        "muted",
-        "bright-black",
-        false,
-        "Hints in the note picker",
-    ),
-    spec(
-        Slot::NotesSelected,
-        "notes",
-        "selected",
-        "bright-black",
-        true,
-        "Behind the picked note",
     ),
     spec(
         Slot::LayerBackground,

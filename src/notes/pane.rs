@@ -79,6 +79,8 @@ pub struct Pane {
     cols: u16,
     rows: u16,
     pixels: (u16, u16),
+    /* The title the program gave its window */
+    pub title: Option<String>,
 }
 
 impl Pane {
@@ -91,6 +93,7 @@ impl Pane {
         cols: u16,
         rows: u16,
         pixels: (u16, u16),
+        env: &[(String, String)],
     ) -> Result<Self, String> {
         let pty = native_pty_system()
             .openpty(pty_size(cols, rows, pixels))
@@ -100,6 +103,22 @@ impl Pane {
         command.cwd(cwd);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+        /* The program runs in viewmer's panel, not in kitty: told it's kitty, yazi
+         * would try to draw images the panel can't show */
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        for name in [
+            "KITTY_WINDOW_ID",
+            "KITTY_PID",
+            "KITTY_LISTEN_ON",
+            "KITTY_PUBLIC_KEY",
+            "TERM_PROGRAM",
+            "TERM_PROGRAM_VERSION",
+            "YAZI_LEVEL",
+        ] {
+            command.env_remove(name);
+        }
         let child = pty
             .slave
             .spawn_command(command)
@@ -150,6 +169,7 @@ impl Pane {
             cols,
             rows,
             pixels,
+            title: None,
         })
     }
 
@@ -180,6 +200,14 @@ impl Pane {
         for event in events {
             let reply = match event {
                 Event::PtyWrite(text) => text,
+                Event::Title(title) => {
+                    self.title = Some(title);
+                    continue;
+                }
+                Event::ResetTitle => {
+                    self.title = None;
+                    continue;
+                }
                 Event::TextAreaSizeRequest(format) => format(WindowSize {
                     num_lines: self.rows,
                     num_cols: self.cols,
@@ -395,6 +423,7 @@ mod tests {
             20,
             4,
             (200, 80),
+            &[],
         )
         .unwrap();
         let end = Instant::now() + Duration::from_secs(5);

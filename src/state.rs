@@ -295,8 +295,6 @@ const GROUPS: [Group; 9] = [
             ConfigAction::FocusNote,
             ConfigAction::FocusPdf,
             ConfigAction::HideNote,
-            ConfigAction::SwitchNote,
-            ConfigAction::NewNote,
             ConfigAction::WidenNote,
             ConfigAction::NarrowNote,
             ConfigAction::TagPage,
@@ -304,9 +302,11 @@ const GROUPS: [Group; 9] = [
         ],
         &[
             ("Ctrl+click", "On a page tag in the note: go to the page"),
-            ("type", "In the picker: find a note"),
-            ("Up Down", "In the picker: move"),
-            ("Enter", "In the picker: open"),
+            (
+                "pdfnote",
+                "In the terminal: the note named after the PDF, from the template",
+            ),
+            ("pdfnote x", "In the terminal: the note named x"),
         ],
     ),
     (
