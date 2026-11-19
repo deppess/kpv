@@ -172,7 +172,7 @@ impl ConfigAction {
             ConfigAction::ZoomIn => "Zoom in",
             ConfigAction::ZoomOut => "Zoom out",
             ConfigAction::CenterViewer => "Center the page",
-            ConfigAction::ToggleInverse => "Invert colors",
+            ConfigAction::ToggleInverse => "Dark pages, in the theme's colors",
             ConfigAction::HalfPageDown => "Half a screen down",
             ConfigAction::HalfPageUp => "Half a screen up",
             ConfigAction::FitWidth => "Fit the width (100%)",

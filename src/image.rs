@@ -131,14 +131,19 @@ pub fn pad_rgba(samples: &[u8], width: usize, n: usize, padding: usize) -> Vec<u
     data
 }
 
-/* Inverts the color channels of a bitmap with `n` (3 or 4) bytes per pixel and leaves
- * the alpha channel alone */
-pub fn invert_pixels(samples: &mut [u8], n: usize) {
-    if n == 3 {
-        samples.iter_mut().for_each(|b| *b = !*b);
-    } else {
-        for px in samples.chunks_exact_mut(n) {
-            px[..3].iter_mut().for_each(|b| *b = !*b);
+/* Dark pages: white paper becomes `background` and black text becomes `text`, the
+ * shades between them in proportion, and colors keep their hue around that, so a red
+ * mark stays red. For a bitmap with `n` (3 or 4) bytes per pixel; alpha stays. */
+pub fn recolor_pixels(samples: &mut [u8], n: usize, background: [u8; 3], text: [u8; 3]) {
+    for px in samples.chunks_exact_mut(n) {
+        let (r, g, b) = (px[0] as i32, px[1] as i32, px[2] as i32);
+        /* Perceived lightness, 0 to 255 */
+        let light = (54 * r + 183 * g + 19 * b) >> 8;
+        let dark = 255 - light;
+        for (c, value) in [r, g, b].into_iter().enumerate() {
+            let (bg, fg) = (background[c] as i32, text[c] as i32);
+            let base = bg + (fg - bg) * dark / 255;
+            px[c] = (base + value - light).clamp(0, 255) as u8;
         }
     }
 }
@@ -381,13 +386,19 @@ mod tests {
     }
 
     #[test]
-    fn inverting_keeps_alpha() {
-        let mut rgb = [0, 100, 255, 1, 2, 3];
-        invert_pixels(&mut rgb, 3);
-        assert_eq!(rgb, [255, 155, 0, 254, 253, 252]);
-        let mut rgba = [0, 100, 255, 7, 1, 2, 3, 9];
-        invert_pixels(&mut rgba, 4);
-        assert_eq!(rgba, [255, 155, 0, 7, 254, 253, 252, 9]);
+    fn dark_pages_take_the_theme_colors_and_keep_hues() {
+        let (bg, fg) = ([30, 32, 48], [220, 220, 230]);
+        /* White paper, black text, a gray in between */
+        let mut px = [255, 255, 255, 0, 0, 0, 128, 128, 128];
+        recolor_pixels(&mut px, 3, bg, fg);
+        assert_eq!(&px[..3], &bg);
+        assert_eq!(&px[3..6], &fg);
+        assert!(px[6] > bg[0] && px[6] < fg[0]);
+        /* A red mark stays reddest in red; alpha is kept */
+        let mut red = [220, 40, 40, 77];
+        recolor_pixels(&mut red, 4, bg, fg);
+        assert!(red[0] > red[1] + 100 && red[0] > red[2] + 100, "{:?}", red);
+        assert_eq!(red[3], 77);
     }
 
     #[test]

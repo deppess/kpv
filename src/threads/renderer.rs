@@ -13,7 +13,7 @@ use crate::{
     config::Config,
     drivers::priority_channel::{unbounded_priority, PriorityReceiver, PrioritySender},
     globals::{CONFIG, RENDER_SCALE, RUNNING},
-    image::{invert_pixels, Image, Region},
+    image::{recolor_pixels, Image, Region},
     labels,
     outline::{self, OutlineEntry},
     store,
@@ -474,7 +474,11 @@ impl Renderer {
                         };
                         if state.inverse {
                             let n = pixmap.n() as usize;
-                            invert_pixels(pixmap.samples_mut(), n);
+                            let (background, _) =
+                                page_color(Slot::PagesDarkBackground, [30, 30, 36], 255);
+                            let (text, _) =
+                                page_color(Slot::PagesDarkText, [220, 220, 224], 255);
+                            recolor_pixels(pixmap.samples_mut(), n, background, text);
                         }
                         state.highlight(page, &mut pixmap, render);
 

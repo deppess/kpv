@@ -288,6 +288,8 @@ pub enum Slot {
     PagesMatch,
     PagesCurrentMatch,
     PagesRuler,
+    PagesDarkBackground,
+    PagesDarkText,
 }
 
 /* Where a slot lives in theme.toml, its default, and whether it may be see-through */
@@ -318,7 +320,7 @@ const fn spec(
     }
 }
 
-pub const SPECS: [Spec; 43] = [
+pub const SPECS: [Spec; 45] = [
     spec(
         Slot::FrameBorder,
         "frame",
@@ -655,6 +657,22 @@ pub const SPECS: [Spec; 43] = [
         "#5aa0ff",
         true,
         "The reading ruler",
+    ),
+    spec(
+        Slot::PagesDarkBackground,
+        "pages",
+        "dark_background",
+        "#1e1e24",
+        false,
+        "Paper on dark pages",
+    ),
+    spec(
+        Slot::PagesDarkText,
+        "pages",
+        "dark_text",
+        "#dcdce0",
+        false,
+        "Text on dark pages",
     ),
 ];
 

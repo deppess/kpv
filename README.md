@@ -39,7 +39,7 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 | `=` / `z` | Fit the page width (100%) / fit the whole page |
 | `C` | Center the page |
 | `r` | Reading ruler on / off |
-| `Ctrl-r` | Invert colors |
+| `Ctrl-r` | Dark pages: paper and text in the theme's `pages.dark_background` and `pages.dark_text`, colors keeping their hue |
 | `Ctrl-a` | Transparent page background |
 | `?` | Every key from your config, grouped, with the keys of the panels and the `:` commands; `j`/`k`, `d`/`u`, `g`/`G` and the mouse wheel scroll, `q` closes |
 | `Ctrl-h` / `Ctrl-l` | The note / the PDF (see [Notes](#notes)) |
