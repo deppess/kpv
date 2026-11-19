@@ -2,6 +2,8 @@
 
 A PDF viewer for the kitty terminal. Pages scroll continuously in a framed window with a status bar, and you get vim-like keys, page jumps, full-text search with highlights, a key list on `?`, clickable links, live reload when the file changes, and a notes panel with your editor beside the pages. It is a fork of [MeowPDF](https://github.com/monoamine11231/MeowPDF), reworked for one setup.
 
+Source: [Codeberg](https://codeberg.org/deppes/viewmer) (primary) · [GitHub](https://github.com/deppess/viewmer) (mirror)
+
 ## Usage
 
 ```sh
@@ -134,15 +136,23 @@ rules = [
 
 ## Build and test
 
+viewmer is built from source, and built and tested on macOS. It needs Rust, and the Xcode command line tools for building MuPDF:
+
 ```sh
-cargo build --release
-cargo install --path .
-cargo fmt --all -- --check
-cargo clippy --all-features -- -D clippy::all
-cargo test --all-features -- --test-threads 1
+cargo install --git https://codeberg.org/deppes/viewmer
 ```
 
-The tests cover the page placement and clipping math, which images a frame places again, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, key and prompt handling, search stepping, the help list, reading colors and the theme file, encoding keys, the mouse and pastes for the editor, passing the terminal's images on to kitty, running a program in the notes panel, naming notes and writing them from a template, finding page tags, reading printed page numbers off the pages, laying the config over the defaults, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
+From a checkout, what CI runs:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --all-features --all-targets -- -D clippy::all
+cargo test --all-features -- --test-threads 1
+cargo build --release
+cargo install --path .
+```
+
+The tests cover the page placement and clipping math, which images a frame places again, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, key and prompt handling, search stepping, the help list, reading colors and the theme file, encoding keys, the mouse and pastes for the editor, passing the terminal's images on to kitty, running a program in the notes panel with its scrollback and clipboard copies, naming notes and writing them from a template, finding page tags, reading printed page numbers off the pages, laying the config over the defaults, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
 
 ## License
 

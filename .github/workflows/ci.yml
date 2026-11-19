@@ -1,58 +1,20 @@
-name: Build
+name: CI
 
 on:
-  # Build main branch only
-  push:
-    branches:
-      - main
-  # Build pull requests targeting main branch only
   pull_request:
-    branches:
-      - main
+  push:
+    branches: [main]
 
 jobs:
   test:
-    name: ${{matrix.rust}} on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macOS-latest]
-        rust: [stable, nightly]
-        # Allow failures on nightly, it's just informative
-        include:
-          - rust: stable
-            can-fail: false
-          - rust: nightly
-            can-fail: true
+    runs-on: macos-15
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v1
-      with:
-        fetch-depth: 1
-    - name: Install Rust
-      uses: hecrj/setup-rust-action@master
-      with:
-        rust-version: ${{ matrix.rust }}
-        components: rustfmt,clippy
-    - name: Toolchain Information
-      run: |
-        rustc --version
-        rustfmt --version
-        rustup --version
-        cargo --version
-    - name: Check Formatting
-      if: matrix.rust == 'stable'
-      run: cargo fmt --all -- --check
-      continue-on-error: ${{ matrix.can-fail }}
-    - name: Clippy
-      run: cargo clippy --all-features -- -D clippy::all
-      continue-on-error: ${{ matrix.can-fail }}
-    - name: Test Build
-      run: cargo build
-      continue-on-error: ${{ matrix.can-fail }}
-    - name: Test all features
-      run: cargo test --all-features -- --nocapture --test-threads 1
-      continue-on-error: ${{ matrix.can-fail }}
-    - name: Test no default features
-      run: cargo test --no-default-features -- --nocapture --test-threads 1
-      continue-on-error: ${{ matrix.can-fail }}
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-features --all-targets -- -D clippy::all
+      - name: Tests
+        run: cargo test --all-features -- --test-threads 1
+      - name: Release build
+        run: cargo build --release

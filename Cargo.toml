@@ -1,7 +1,12 @@
 [package]
 name = "viewmer"
+version = "1.0.0"
 edition = "2021"
-version = "0.1.0"
+description = "A PDF viewer for the kitty terminal, with a notes terminal beside the pages"
+license = "PolyForm-Strict-1.0.0"
+repository = "https://codeberg.org/deppes/viewmer"
+readme = "README.md"
+publish = false
 
 [dependencies]
 base64 = "0.22.1"
@@ -26,3 +31,5 @@ codegen-units = 1
 
 [profile.dev]
 panic = "abort"
+# Line numbers for backtraces without the full debug info, which is most of target/
+debug = "line-tables-only"

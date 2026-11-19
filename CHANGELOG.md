@@ -1,62 +1,28 @@
-## [1.2.2] - 2026-01-13
+# Changelog
 
-### Added
+## 1.0.0 - 2026-11-19
 
-- Next and previous page jump commands with corresponding keybindings ([@PhilT](https://github.com/PhilT)).
-- Auto-fix of the config file when new keybindings are implemented ([#9](https://github.com/monoamine11231/MeowPDF/issues/9)).
+The first release of viewmer, forked from MeowPDF 1.2.2, whose history is in [its repository](https://github.com/monoamine11231/MeowPDF/blob/main/CHANGELOG.md).
 
-### Fixed
+### Reading
 
-- Inverting scroll direction now applies on mouse scroll wheel only and not on keys ([@PhilT](https://github.com/PhilT)).
+- Pages render at the screen's own resolution and again on every zoom, so they stay sharp; zoomed far in, the part in view is drawn sharp and the pages around it coarser, within the memory kitty keeps for images.
+- A framed window with the document's title and a status bar: mode, page as printed, zoom, section, search.
+- Printed page numbers are read off the pages of PDFs that don't say how they're numbered; `:offset` sets them by hand.
+- Search runs in the background with highlights, a contents panel with folding and filtering, marks, a jump list, a reading ruler, dark pages, and a key list on `?`.
+- Each file reopens where it was left, with its layout, marks and note. Live reload when the file changes, including saves that replace it.
 
-## [1.2.1] - 2025-06-10
+### Notes
 
-### Added
+- `Ctrl-h` opens a terminal beside the PDF running your shell in the notes folder: helix, yazi and anything else run as in any terminal, with images, scrollback and the clipboard. `Ctrl-l` goes back; `Ctrl-h` from inside hides it.
+- `pdfnote` opens the note named after the PDF, made from your template with a link back to it; `hx` there saves when focus leaves the panel.
+- `Alt-t` tags the page you're reading in the note; `Alt-g` and Ctrl-click go to a tagged page.
 
-- Basic CLI commands such as help + version [#7](https://github.com/monoamine11231/MeowPDF/issues/7).
-- `hjkl` keybindings for cursor control [#7](https://github.com/monoamine11231/MeowPDF/issues/7).
-- Vertical scroll inversion configuration key.
+### Settings
 
-### Changed
+- `config.toml` and `theme.toml` in `~/.config/viewmer`: a config only needs what it changes, colors take any common notation and panels can be see-through.
 
-- Vertical scrolling has been made non-inverse by default.
+### Robustness
 
-## [1.2.0] - 2025-05-30
-
-### Added
-
-- Link clicking and hovering.
-- URI annotation bar showing the hovered link path.
-- Better documentation on the customization of different components.
-
-### Removed
-
-- Type hints from the code base.
-
-### Changed
-
-- The messy display method by now using display rectangular boundaries.
-
-## [1.1.0] - 2025-05-28
-
-### Added
-
-- Customization of keyboard bindings by integration of `keybinds-rs`.
-- Automatic scaling of page size to terminal size on start.
-- Priority channels for less boilerplate on inter-thread communication.
-- Integrated `crossterm` fork to support Kitty terminal graphics responses and more.
-
-### Removed
-
-- Default scale of the document when entering a document.
-- Window resize thread as it is handled by `crossterm`.
-- `broadcast.rs` as it is replaced by `priority_channel.rs`.
-- Bar descriptions from config as a complete rewrite is planned soon.
-- `tui.rs` as nearly all of the functions are implemented in `crossterm` crate.
-- Manual parsing of events from stdin using regex DFA's.
-
-### Changed
-
-- Separated `viewer.rs` into a separate thread module for handling rendering events.
-- Separated threads from `main.rs` into separate modules. 
-- Modified the thread communication between threads so that every event goes through `fn main`.
+- A crash watcher gives the terminal back, logs the crash and starts the viewer again where it was. Closing the window, `kill` and interrupts quit as `q` does, saving first; state files are written whole and synced before they replace the old ones.
+- Quitting frees the images viewmer gave kitty.
