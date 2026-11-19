@@ -89,6 +89,7 @@ pub fn handle_key(
                     /* The zoom keys make the panel wider and narrower */
                     Some(ConfigAction::ZoomIn) => resize_toc(5, app),
                     Some(ConfigAction::ZoomOut) => resize_toc(-5, app),
+                    Some(action) if action.is_pane() => pane_action(action, viewer, app),
                     _ => (),
                 },
             }
@@ -237,7 +238,9 @@ pub fn handle_key(
         | ConfigAction::FocusPdf
         | ConfigAction::HideNote
         | ConfigAction::SwitchNote
-        | ConfigAction::NewNote => pane_action(action, viewer, app),
+        | ConfigAction::NewNote
+        | ConfigAction::WidenNote
+        | ConfigAction::NarrowNote => pane_action(action, viewer, app),
         ConfigAction::NextMatch | ConfigAction::PrevMatch => {
             let steps = if action == ConfigAction::NextMatch {
                 times as isize
@@ -598,6 +601,17 @@ pub fn pane_action(action: ConfigAction, viewer: &mut Viewer, app: &mut App) {
         ConfigAction::HideNote => app.notes.hide(),
         ConfigAction::SwitchNote => app.notes.choose_another(false),
         ConfigAction::NewNote => app.notes.choose_another(true),
+        /* A small step, so that holding the key resizes smoothly */
+        ConfigAction::WidenNote | ConfigAction::NarrowNote => {
+            let step: i16 = if action == ConfigAction::WidenNote {
+                2
+            } else {
+                -2
+            };
+            ui::set_notes_percent((ui::notes_percent() as i16 + step).max(0) as u16);
+            save_panel_sizes();
+            app.message = Some(format!("Note {}% wide", ui::notes_percent()));
+        }
         _ => return,
     }
     if app.mode == Mode::Toc && app.notes.focused {
@@ -658,8 +672,7 @@ fn over_notes(app: &App, x: u16, y: u16) -> Option<(u16, u16)> {
         return None;
     }
     let inner = inner();
-    let (left, top, width, height) =
-        ui::notes_rect(&inner, CONFIG.get().unwrap().notes.width);
+    let (left, top, width, height) = ui::notes_rect(&inner, ui::notes_percent());
     let (col, row) = ui::cell_at(&inner, x, y);
     let inside = col >= left && col < left + width && row >= top && row < top + height;
     inside.then(|| {

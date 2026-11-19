@@ -261,6 +261,8 @@ const GROUPS: [Group; 9] = [
             ConfigAction::HideNote,
             ConfigAction::SwitchNote,
             ConfigAction::NewNote,
+            ConfigAction::WidenNote,
+            ConfigAction::NarrowNote,
         ],
         &[
             ("type", "In the picker: find a note"),

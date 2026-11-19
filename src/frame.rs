@@ -16,7 +16,6 @@ use crate::config::*;
 use crate::drivers;
 use crate::drivers::commands::{ClearImages, PointerShape, SetPointerShape};
 use crate::drivers::graphics::{self, GraphicsResponse};
-use crate::globals::CONFIG;
 use crate::image::*;
 use crate::outline::{breadcrumb, current_section};
 use crate::state::*;
@@ -172,7 +171,7 @@ fn tints(app: &App) -> Vec<Tint> {
         _ => (),
     }
     if app.notes.open {
-        let rect = ui::notes_rect(&vp, CONFIG.get().unwrap().notes.width);
+        let rect = ui::notes_rect(&vp, ui::notes_percent());
         add(
             Slot::NotesBackground,
             graphics::NOTES_TINT_ID,
@@ -209,7 +208,7 @@ fn tints(app: &App) -> Vec<Tint> {
 
 /* The notes panel: the note picker or the editor's screen */
 fn draw_notes(app: &App) -> io::Result<()> {
-    let rect = ui::notes_rect(&ui::inner(), CONFIG.get().unwrap().notes.width);
+    let rect = ui::notes_rect(&ui::inner(), ui::notes_percent());
     let notes = &app.notes;
     let title = match (&notes.picker, &notes.note) {
         (None, Some(note)) => note
@@ -255,8 +254,7 @@ fn editor_cursor(app: &App) -> Option<(u16, u16, SetCursorStyle)> {
         return None;
     }
     let (col, row, shape) = notes.editor.as_ref()?.cursor()?;
-    let (left, top, width, height) =
-        ui::notes_rect(&ui::inner(), CONFIG.get().unwrap().notes.width);
+    let (left, top, width, height) = ui::notes_rect(&ui::inner(), ui::notes_percent());
     if col + 2 >= width || row + 2 >= height {
         return None;
     }

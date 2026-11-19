@@ -81,13 +81,15 @@ pub enum ConfigAction {
     HideNote,
     SwitchNote,
     NewNote,
+    WidenNote,
+    NarrowNote,
 }
 
 impl ConfigAction {
     /* Every action, for the tests that check each one has a key and a place in the
      * key list */
     #[cfg(test)]
-    pub const ALL: [ConfigAction; 35] = [
+    pub const ALL: [ConfigAction; 37] = [
         ConfigAction::MoveDown,
         ConfigAction::MoveUp,
         ConfigAction::MoveLeft,
@@ -121,6 +123,8 @@ impl ConfigAction {
         ConfigAction::HideNote,
         ConfigAction::SwitchNote,
         ConfigAction::NewNote,
+        ConfigAction::WidenNote,
+        ConfigAction::NarrowNote,
         ConfigAction::ShowHelp,
         ConfigAction::Quit,
     ];
@@ -134,6 +138,8 @@ impl ConfigAction {
                 | ConfigAction::HideNote
                 | ConfigAction::SwitchNote
                 | ConfigAction::NewNote
+                | ConfigAction::WidenNote
+                | ConfigAction::NarrowNote
         )
     }
 
@@ -172,6 +178,8 @@ impl ConfigAction {
             ConfigAction::HideNote => "Hide the note (it's saved)",
             ConfigAction::SwitchNote => "Switch to another note",
             ConfigAction::NewNote => "New note with a name you type",
+            ConfigAction::WidenNote => "Note wider, pages narrower",
+            ConfigAction::NarrowNote => "Note narrower, pages wider",
             ConfigAction::ShowHelp => "This list",
             ConfigAction::Quit => "Quit viewmer",
         }
@@ -244,6 +252,22 @@ fn fix_config_keybindings(
  * action gets its new key. A binding the user changed is left alone. */
 const RETIRED_BINDINGS: [(&str, &str); 1] = [("Ctrl+o", "ToggleInverse")];
 
+/* Default keys that later versions added for actions that already had keys: (key,
+ * action). A config gets each where the key isn't bound to anything yet. */
+const ADDED_BINDINGS: [(&str, &str); 2] = [("J", "NextPage"), ("K", "PrevPage")];
+
+fn add_bindings(current: &mut toml::Table, default: &toml::Table) -> bool {
+    let mut changed = false;
+    for (key, action) in ADDED_BINDINGS {
+        let shipped = default.get(key).and_then(Value::as_str) == Some(action);
+        if shipped && !current.contains_key(key) {
+            current.insert(key.to_owned(), Value::from(action));
+            changed = true;
+        }
+    }
+    changed
+}
+
 fn retire_bindings(current: &mut toml::Table, default: &toml::Table) -> bool {
     let mut changed = false;
     for (key, action) in RETIRED_BINDINGS {
@@ -290,6 +314,7 @@ fn fix_config_toml(
             if key == "bindings" {
                 /* Special case */
                 config_has_changed |= retire_bindings(current_rec, default_rec);
+                config_has_changed |= add_bindings(current_rec, default_rec);
                 config_has_changed |= fix_config_keybindings(current_rec, default_rec)?;
             } else if key == "layers" {
                 /* The user's own layers stay; only missing defaults are added */
@@ -1959,5 +1984,19 @@ enabled = true
             "a file that wasn't moved stays"
         );
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn new_default_keys_come_in_where_the_key_is_free() {
+        let mut current: Table = "J = \"Quit\"\nj = \"MoveDown\"\n".parse().unwrap();
+        let default: Table = "J = \"NextPage\"\nK = \"PrevPage\"\n".parse().unwrap();
+        assert!(add_bindings(&mut current, &default));
+        assert_eq!(
+            current["J"].as_str(),
+            Some("Quit"),
+            "a key the user bound stays"
+        );
+        assert_eq!(current["K"].as_str(), Some("PrevPage"));
+        assert!(!add_bindings(&mut current, &default));
     }
 }

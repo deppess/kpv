@@ -300,18 +300,28 @@ fn panel_sizes_file() -> Option<PathBuf> {
     Some(Store::default_dir()?.join("panels.toml"))
 }
 
-/* Reads the contents panel's width from last time */
+/* Reads the panels' widths from last time; the notes panel starts from the config's
+ * width when it was never resized */
 pub fn load_panel_sizes() {
+    ui::set_notes_percent(CONFIG.get().unwrap().notes.width);
     let Some(text) = panel_sizes_file().and_then(|f| std::fs::read_to_string(f).ok())
     else {
         return;
     };
-    let width = text
-        .parse::<toml::Table>()
-        .ok()
-        .and_then(|t| t.get("contents_width")?.as_integer());
-    if let Some(width) = width {
-        ui::set_toc_percent(width.clamp(0, 100) as u16);
+    let Ok(table) = text.parse::<toml::Table>() else {
+        return;
+    };
+    let width = |key: &str| {
+        table
+            .get(key)
+            .and_then(|v| v.as_integer())
+            .map(|w| w.clamp(0, 100) as u16)
+    };
+    if let Some(width) = width("contents_width") {
+        ui::set_toc_percent(width);
+    }
+    if let Some(width) = width("notes_width") {
+        ui::set_notes_percent(width);
     }
 }
 
@@ -322,13 +332,20 @@ pub fn save_panel_sizes() {
     if let Some(dir) = file.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(file, format!("contents_width = {}\n", ui::toc_percent()));
+    let _ = std::fs::write(
+        file,
+        format!(
+            "contents_width = {}\nnotes_width = {}\n",
+            ui::toc_percent(),
+            ui::notes_percent()
+        ),
+    );
 }
 
 /* The size of the editor in the notes panel: the panel inside its border */
 pub fn editor_size() -> EditorSize {
     let inner = ui::inner();
-    let (_, _, width, height) = ui::notes_rect(&inner, CONFIG.get().unwrap().notes.width);
+    let (_, _, width, height) = ui::notes_rect(&inner, ui::notes_percent());
     let (cols, rows) = (width.saturating_sub(2), height.saturating_sub(2));
     EditorSize {
         cols,
@@ -344,7 +361,7 @@ pub fn editor_size() -> EditorSize {
  * when it isn't, keeping the zoom and the place; the editor follows the panel's size */
 pub fn apply_layout(viewer: &mut Viewer, app: &mut App) {
     let cols = if app.notes.open {
-        ui::notes_rect(&ui::inner(), CONFIG.get().unwrap().notes.width).2
+        ui::notes_rect(&ui::inner(), ui::notes_percent()).2
     } else {
         0
     };

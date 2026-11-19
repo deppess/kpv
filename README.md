@@ -23,7 +23,7 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 | Key | Action |
 |---|---|
 | `j` `k` `h` `l` / arrows | Move |
-| `Ctrl-f` / `Ctrl-b`, `PageDown` / `PageUp` | Next / previous page |
+| `J` / `K`, `Ctrl-f` / `Ctrl-b`, `PageDown` / `PageUp` | Next / previous page |
 | `Ctrl-d` / `Ctrl-u` | Half a screen down / up |
 | `gg` / `G` | First / last page |
 | `:45`, `:xiv` | The page printed as 45 or xiv |
@@ -44,6 +44,7 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 | `?` | Every key from your config, grouped, with the keys of the panels and the `:` commands; `j`/`k`, `d`/`u`, `g`/`G` and the mouse wheel scroll, `q` closes |
 | `Ctrl-h` / `Ctrl-l` | The note / the PDF (see [Notes](#notes)) |
 | `Ctrl-Space` | The notes layer: `x` hide the note, `s` switch notes, `c` new note |
+| `Ctrl-=` / `Ctrl--` | The note wider / narrower, and the pages narrower / wider; kept for next time |
 | `q`, `:q` | Quit |
 
 Marks belong to the file and are remembered with its position. `:marks` lists them with their pages, `:delm a` deletes mark a and `:delm!` deletes them all.
@@ -90,7 +91,7 @@ The mouse wheel scrolls the panel. Clicking an entry goes there, and clicking it
 
 `Ctrl-h` opens a note beside the PDF, in your editor (helix by default) running in a panel on the left, and the pages move over to the right. The first time, it asks which note: a new one named after the PDF (the title stored in it, or else its file name), one you name, or any note in your vault, which typing filters. A new note starts from your template with a link back to the PDF; the PDF remembers its note, and opens it straight away after that, at its end.
 
-`Ctrl-l` goes back to the PDF and `Ctrl-h` to the note again; a click on either side does the same. While the note has the keys, every key goes to the editor except `Ctrl-h`, `Ctrl-l` and `Ctrl-Space`, which shows the notes layer: `x` hides the note, `s` switches to another note, `c` makes a new one with a name you type. The mouse wheel scrolls whichever side it's over. The contents panel opens beside the note, at the left of the pages.
+`Ctrl-l` goes back to the PDF and `Ctrl-h` to the note again; a click on either side does the same. While the note has the keys, every key goes to the editor except `Ctrl-h`, `Ctrl-l`, `Ctrl-=`, `Ctrl--` and `Ctrl-Space`, which shows the notes layer: `x` hides the note, `s` switches to another note, `c` makes a new one with a name you type. The mouse wheel scrolls whichever side it's over. The contents panel opens beside the note, at the left of the pages.
 
 The note is saved whenever you leave it: going back to the PDF, hiding it, leaving the terminal window, quitting, or closing the window. viewmer starts helix with your own config plus saving on losing focus, and from the vault folder, so its settings for the vault apply. Hiding the note keeps the editor running, so it comes back as you left it; `:q` in the editor closes the panel. If the PDF moves and comes back under its permanent ID, the link in its note moves along.
 

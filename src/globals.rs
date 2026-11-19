@@ -102,6 +102,10 @@ width = 45
 "Ctrl+Space x" = "HideNote"
 "Ctrl+Space s" = "SwitchNote"
 "Ctrl+Space c" = "NewNote"
+"Ctrl+=" = "WidenNote"
+"Ctrl+-" = "NarrowNote"
+"J" = "NextPage"
+"K" = "PrevPage"
 "#;
 
 /* Hate on me for those global singletons as much as you want. */

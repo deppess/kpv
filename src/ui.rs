@@ -84,6 +84,20 @@ pub fn viewport() -> Viewport {
     vp
 }
 
+/* How wide the notes panel is, in percent of the window; set from the config, then
+ * from what Ctrl-= and Ctrl-- made it last time */
+static NOTES_PERCENT: AtomicU16 = AtomicU16::new(45);
+pub const NOTES_PERCENT_RANGE: (u16, u16) = (15, 85);
+
+pub fn notes_percent() -> u16 {
+    NOTES_PERCENT.load(Ordering::Acquire)
+}
+
+pub fn set_notes_percent(percent: u16) {
+    let (low, high) = NOTES_PERCENT_RANGE;
+    NOTES_PERCENT.store(percent.clamp(low, high), Ordering::Release);
+}
+
 /* The notes panel on the left of `inner`, `percent` of its width: left, top, width
  * and height in cells, border included */
 pub fn notes_rect(inner: &Viewport, percent: u16) -> (u16, u16, u16, u16) {
