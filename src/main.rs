@@ -420,6 +420,7 @@ fn main() {
                         pane.feed(&bytes);
                         pane.take_output();
                     }
+                    app.notes.pass_graphics();
                 }
                 Nothing => continue 'main,
                 /* The shell ended (`exit`): the panel closes */

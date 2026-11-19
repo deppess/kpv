@@ -22,6 +22,7 @@ use crossterm::{
 };
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
+use super::graphics::{Piece, Splitter, Translator};
 use super::keys::{encode_focus, encode_key, encode_mouse, encode_paste};
 
 /* Collects what the emulator wants done, such as answering the program's questions */
@@ -83,6 +84,12 @@ pub struct Pane {
     pixels: (u16, u16),
     /* The title the program gave its window */
     pub title: Option<String>,
+    /* Image commands taken out of the output, and what they become for kitty */
+    splitter: Splitter,
+    translator: Translator,
+    graphics: Vec<u8>,
+    /* Where the screen's top-left cell is in the window */
+    pub origin: (u16, u16),
 }
 
 impl Pane {
@@ -172,12 +179,16 @@ impl Pane {
             rows,
             pixels,
             title: None,
+            splitter: Splitter::default(),
+            translator: Translator::default(),
+            graphics: Vec::new(),
+            origin: (0, 0),
         })
     }
 
     /* Takes in bytes the program wrote */
     pub fn feed(&mut self, bytes: &[u8]) {
-        self.parser.advance(&mut self.term, bytes);
+        self.process(bytes);
         self.answer();
     }
 
@@ -185,11 +196,33 @@ impl Pane {
     pub fn take_output(&mut self) -> bool {
         let mut any = false;
         while let Ok(bytes) = self.output.try_recv() {
-            self.parser.advance(&mut self.term, &bytes);
+            self.process(&bytes);
             any = true;
         }
         self.answer();
         any
+    }
+
+    /* Text goes to the screen; image commands become commands for kitty, placed where
+     * the cursor is when they come */
+    fn process(&mut self, bytes: &[u8]) {
+        for piece in self.splitter.split(bytes) {
+            match piece {
+                Piece::Text(text) => self.parser.advance(&mut self.term, &text),
+                Piece::Command(command) => {
+                    let (col, row) = self.cursor_point();
+                    let at = (self.origin.0 + col, self.origin.1 + row);
+                    let (out, reply) = self.translator.command(&command, at);
+                    self.graphics.extend(out);
+                    self.send(&reply);
+                }
+            }
+        }
+    }
+
+    /* The image commands for kitty since last asked */
+    pub fn take_graphics(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.graphics)
     }
 
     /* Answers what the program asked the terminal: its keyboard modes, its identity,
@@ -273,6 +306,10 @@ impl Pane {
     ) {
         let bytes = encode_mouse(kind, mods, col, row, self.mode());
         self.send(&bytes);
+    }
+
+    pub fn size(&self) -> (u16, u16) {
+        (self.cols, self.rows)
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16, pixels: (u16, u16)) {

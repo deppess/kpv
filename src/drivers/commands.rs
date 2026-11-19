@@ -5,7 +5,13 @@ use crossterm::Command;
 pub struct ClearImages;
 impl Command for ClearImages {
     fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        f.write_str("\x1B_Ga=d,d=a\x1B\\")
+        /* Only the pages, by their layers: the notes terminal's images stay */
+        write!(
+            f,
+            "\x1B_Gq=2,a=d,d=z,z={}\x1B\\\x1B_Gq=2,a=d,d=z,z={}\x1B\\",
+            crate::drivers::graphics::PAGE_Z,
+            crate::drivers::graphics::UNDER_Z
+        )
     }
 }
 

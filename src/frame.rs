@@ -71,12 +71,11 @@ pub fn draw_frame(
     if ruler {
         match &shown.ruler {
             Some(ruler) => place_ruler(app, ruler),
-            None if !clear => {
+            None => {
                 let _ = drivers::graphics::terminal_graphics_hide(
                     drivers::graphics::RULER_ID,
                 );
             }
-            None => (),
         }
     }
     for t in &tints {

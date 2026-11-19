@@ -120,9 +120,9 @@ pub fn terminal_graphics_display_image(
  * background, which lets an opaque panel cover them, and every negative z-index is
  * behind text. From the bottom up: pages, the ruler over them, the tint of a
  * see-through panel, the tint of the selected entry in it, and a layer's box. */
-const PAGE_Z: i64 = -1_073_741_830;
+pub const PAGE_Z: i64 = -1_073_741_830;
 /* A coarse whole page under the sharp part of a page, showing where that ends */
-const UNDER_Z: i64 = -1_073_741_831;
+pub const UNDER_Z: i64 = -1_073_741_831;
 const RULER_Z: i64 = -1_073_741_829;
 pub const PANEL_Z: i64 = -1_073_741_828;
 pub const SELECTED_Z: i64 = -1_073_741_827;

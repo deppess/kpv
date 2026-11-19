@@ -3,6 +3,7 @@
  * when focus leaves the panel, `pdfnote` opens the note named after the PDF, and page
  * tags go in and out of what it shows. */
 
+pub mod graphics;
 pub mod keys;
 pub mod note;
 pub mod pane;
@@ -94,10 +95,13 @@ impl Notes {
         }
     }
 
-    /* Hides the panel; what runs in it goes on, saved */
+    /* Hides the panel; what runs in it goes on, saved, and its images go */
     pub fn hide(&mut self) {
         self.unfocus();
         self.open = false;
+        if self.terminal.is_some() {
+            send_to_kitty(&graphics::clear(false));
+        }
     }
 
     fn start(&mut self, size: EditorSize) -> Result<(), String> {
@@ -145,6 +149,7 @@ impl Notes {
             thread::sleep(Duration::from_millis(10));
         }
         terminal.kill();
+        send_to_kitty(&graphics::clear(true));
     }
 
     /* The shell ended (`exit`): the panel closes */
@@ -152,6 +157,17 @@ impl Notes {
         self.terminal = None;
         self.open = false;
         self.focused = false;
+        send_to_kitty(&graphics::clear(true));
+    }
+
+    /* Passes the images the terminal's programs drew on to kitty */
+    pub fn pass_graphics(&mut self) {
+        if let Some(terminal) = &mut self.terminal {
+            let out = terminal.take_graphics();
+            if !out.is_empty() {
+                send_to_kitty(&out);
+            }
+        }
     }
 }
 
@@ -172,6 +188,13 @@ fn login_shell() -> String {
         .filter(|s| !s.is_empty())
         .or_else(|| std::env::var("SHELL").ok())
         .unwrap_or_else(|| "/bin/sh".to_owned())
+}
+
+/* Writes to kitty in one go, so that nothing else lands in the middle */
+pub fn send_to_kitty(bytes: &[u8]) {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    let _ = out.write_all(bytes).and_then(|_| out.flush());
 }
 
 /* The note's name for a PDF: the title stored in it, or else its file name */

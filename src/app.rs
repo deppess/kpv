@@ -177,6 +177,17 @@ pub struct Changes {
  * arrives on its own changes nothing in view and is placed by itself, and the ruler
  * and the tints move by themselves. */
 pub fn changes(old: Option<&Shown>, new: &Shown) -> Changes {
+    /* Only page images go when everything is placed again; tints that aren't wanted any
+     * more are taken down either way */
+    let hide = old
+        .map(|old| {
+            old.tints
+                .iter()
+                .map(|t| t.id)
+                .filter(|id| !new.tints.iter().any(|t| t.id == *id))
+                .collect()
+        })
+        .unwrap_or_default();
     match old {
         Some(old) if old.in_view() == new.in_view() => Changes {
             clear: false,
@@ -193,19 +204,14 @@ pub fn changes(old: Option<&Shown>, new: &Shown) -> Changes {
                 .filter(|t| !old.tints.contains(t))
                 .cloned()
                 .collect(),
-            hide: old
-                .tints
-                .iter()
-                .map(|t| t.id)
-                .filter(|id| !new.tints.iter().any(|t| t.id == *id))
-                .collect(),
+            hide,
         },
         _ => Changes {
             clear: true,
             pages: new.pages.clone(),
             ruler: true,
             tints: new.tints.clone(),
-            hide: Vec::new(),
+            hide,
         },
     }
 }
@@ -436,6 +442,10 @@ pub fn apply_layout(viewer: &mut Viewer, app: &mut App) {
     }
     let size = editor_size();
     if let Some(terminal) = &mut app.notes.terminal {
+        if terminal.size() != (size.cols, size.rows) {
+            /* The program draws its images again at the new size */
+            crate::notes::send_to_kitty(&crate::notes::graphics::clear(false));
+        }
         terminal.resize(size.cols, size.rows, size.pixels);
     }
 }
