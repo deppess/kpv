@@ -4,6 +4,7 @@ pub mod keys;
 pub mod note;
 pub mod pane;
 pub mod picker;
+pub mod tags;
 
 use std::{
     path::{Path, PathBuf},

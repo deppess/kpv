@@ -102,6 +102,8 @@ width = 45
 "Ctrl+Space x" = "HideNote"
 "Ctrl+Space s" = "SwitchNote"
 "Ctrl+Space c" = "NewNote"
+"Ctrl+Space p" = "TagPage"
+"Ctrl+Space g" = "GoToTag"
 "Ctrl+=" = "WidenNote"
 "Ctrl+-" = "NarrowNote"
 "J" = "NextPage"

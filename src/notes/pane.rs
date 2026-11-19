@@ -315,6 +315,21 @@ impl Pane {
             .collect()
     }
 
+    /* Where the program's cursor is, 0-indexed, even when it hides it: helix moves the
+     * terminal's cursor to its own and draws it itself in normal mode */
+    pub fn cursor_point(&self) -> (u16, u16) {
+        let point = self.term.grid().cursor.point;
+        (point.column.0 as u16, point.line.0.max(0) as u16)
+    }
+
+    /* The screen's text, row by row; a wide character takes one place */
+    pub fn text(&self) -> Vec<String> {
+        self.screen(Color::Reset, Color::Reset)
+            .iter()
+            .map(|row| row.iter().map(|c| c.text.as_str()).collect())
+            .collect()
+    }
+
     /* Where the cursor is, 0-indexed, and its shape, when the program shows it */
     pub fn cursor(&self) -> Option<(u16, u16, CursorShape)> {
         if !self.mode().contains(TermMode::SHOW_CURSOR) {

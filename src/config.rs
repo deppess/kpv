@@ -83,13 +83,15 @@ pub enum ConfigAction {
     NewNote,
     WidenNote,
     NarrowNote,
+    TagPage,
+    GoToTag,
 }
 
 impl ConfigAction {
     /* Every action, for the tests that check each one has a key and a place in the
      * key list */
     #[cfg(test)]
-    pub const ALL: [ConfigAction; 37] = [
+    pub const ALL: [ConfigAction; 39] = [
         ConfigAction::MoveDown,
         ConfigAction::MoveUp,
         ConfigAction::MoveLeft,
@@ -125,6 +127,8 @@ impl ConfigAction {
         ConfigAction::NewNote,
         ConfigAction::WidenNote,
         ConfigAction::NarrowNote,
+        ConfigAction::TagPage,
+        ConfigAction::GoToTag,
         ConfigAction::ShowHelp,
         ConfigAction::Quit,
     ];
@@ -140,6 +144,8 @@ impl ConfigAction {
                 | ConfigAction::NewNote
                 | ConfigAction::WidenNote
                 | ConfigAction::NarrowNote
+                | ConfigAction::TagPage
+                | ConfigAction::GoToTag
         )
     }
 
@@ -180,6 +186,8 @@ impl ConfigAction {
             ConfigAction::NewNote => "New note with a name you type",
             ConfigAction::WidenNote => "Note wider, pages narrower",
             ConfigAction::NarrowNote => "Note narrower, pages wider",
+            ConfigAction::TagPage => "Tag the page you're reading in the note",
+            ConfigAction::GoToTag => "Go to the page tagged here in the note",
             ConfigAction::ShowHelp => "This list",
             ConfigAction::Quit => "Quit viewmer",
         }

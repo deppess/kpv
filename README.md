@@ -43,7 +43,7 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 | `Ctrl-a` | Transparent page background |
 | `?` | Every key from your config, grouped, with the keys of the panels and the `:` commands; `j`/`k`, `d`/`u`, `g`/`G` and the mouse wheel scroll, `q` closes |
 | `Ctrl-h` / `Ctrl-l` | The note / the PDF (see [Notes](#notes)) |
-| `Ctrl-Space` | The notes layer: `x` hide the note, `s` switch notes, `c` new note |
+| `Ctrl-Space` | The notes layer: `p` tag this page in the note, `g` go to the page tagged there, `x` hide the note, `s` switch notes, `c` new note |
 | `Ctrl-=` / `Ctrl--` | The note wider / narrower, and the pages narrower / wider; kept for next time |
 | `q`, `:q` | Quit |
 
@@ -92,6 +92,8 @@ The mouse wheel scrolls the panel. Clicking an entry goes there, and clicking it
 `Ctrl-h` opens a note beside the PDF, in your editor (helix by default) running in a panel on the left, and the pages move over to the right. The first time, it asks which note: a new one named after the PDF (the title stored in it, or else its file name), one you name, or any note in your vault, which typing filters. A new note starts from your template with a link back to the PDF; the PDF remembers its note, and opens it straight away after that, at its end.
 
 `Ctrl-l` goes back to the PDF and `Ctrl-h` to the note again; a click on either side does the same. While the note has the keys, every key goes to the editor except `Ctrl-h`, `Ctrl-l`, `Ctrl-=`, `Ctrl--` and `Ctrl-Space`, which shows the notes layer: `x` hides the note, `s` switches to another note, `c` makes a new one with a name you type. The mouse wheel scrolls whichever side it's over. The contents panel opens beside the note, at the left of the pages.
+
+`Ctrl-Space p` writes a tag for the page you're reading at the editor's cursor, such as `(p. 45)`, with the number printed on the page (`(p. xiv)` in the front matter). In the note, `Ctrl-Space g` moves the PDF to the tag on the cursor's line, or else to the nearest one above it, and Ctrl-click on a tag goes there too. Tags you type yourself work the same: `p. 45`, `p.45`, `pp. 45-47`.
 
 The note is saved whenever you leave it: going back to the PDF, hiding it, leaving the terminal window, quitting, or closing the window. viewmer starts helix with your own config plus saving on losing focus, and from the vault folder, so its settings for the vault apply. Hiding the note keeps the editor running, so it comes back as you left it; `:q` in the editor closes the panel. If the PDF moves and comes back under its permanent ID, the link in its note moves along.
 
@@ -142,7 +144,7 @@ cargo clippy --all-features -- -D clippy::all
 cargo test --all-features -- --test-threads 1
 ```
 
-The tests cover the page placement and clipping math, which images a frame places again, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, moving retired default keys, key and prompt handling, search stepping, the help list, reading colors and the theme file, encoding keys, the mouse and pastes for the editor, running a program in the notes panel, naming notes and writing them from a template, the note picker, the config merge and upgrade, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
+The tests cover the page placement and clipping math, which images a frame places again, reading printed page numbers and the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), the jump list, marks, finding text lines and placing the ruler, moving retired default keys, key and prompt handling, search stepping, the help list, reading colors and the theme file, encoding keys, the mouse and pastes for the editor, running a program in the notes panel, naming notes and writing them from a template, the note picker, finding page tags, the config merge and upgrade, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
 
 ## License
 

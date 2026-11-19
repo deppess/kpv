@@ -8,7 +8,7 @@ use crate::config::*;
 use crate::drivers::commands::PointerShape;
 use crate::frame::set_pointer;
 use crate::globals::*;
-use crate::notes::picker::PickerKey;
+use crate::notes::{picker::PickerKey, tags};
 use crate::outline::{current_section, TocKey};
 use crate::ruler;
 use crate::state::*;
@@ -240,7 +240,9 @@ pub fn handle_key(
         | ConfigAction::SwitchNote
         | ConfigAction::NewNote
         | ConfigAction::WidenNote
-        | ConfigAction::NarrowNote => pane_action(action, viewer, app),
+        | ConfigAction::NarrowNote
+        | ConfigAction::TagPage
+        | ConfigAction::GoToTag => pane_action(action, viewer, app),
         ConfigAction::NextMatch | ConfigAction::PrevMatch => {
             let steps = if action == ConfigAction::NextMatch {
                 times as isize
@@ -612,6 +614,30 @@ pub fn pane_action(action: ConfigAction, viewer: &mut Viewer, app: &mut App) {
             save_panel_sizes();
             app.message = Some(format!("Note {}% wide", ui::notes_percent()));
         }
+        /* At the editor's cursor, as a paste, so helix keeps its mode */
+        ConfigAction::TagPage => {
+            let label = viewer.page_label(viewer.page_view());
+            match &mut app.notes.editor {
+                Some(editor) if app.notes.picker.is_none() => {
+                    editor.paste(&format!("{} ", tags::tag(&label)));
+                    app.message = Some(format!("Tagged page {}", label));
+                }
+                _ => app.message = Some("Open the note first, with Ctrl-h".to_owned()),
+            }
+            return;
+        }
+        ConfigAction::GoToTag => {
+            let found = app.notes.editor.as_ref().map(|editor| {
+                let (col, row) = editor.cursor_point();
+                tags::nearest_tag(&editor.text(), row as usize, col as usize)
+            });
+            match found {
+                Some(Some(page)) => go_to_tag(&page, viewer, app),
+                Some(None) => app.message = Some("No page tag here or above".to_owned()),
+                None => app.message = Some("Open the note first, with Ctrl-h".to_owned()),
+            }
+            return;
+        }
         _ => return,
     }
     if app.mode == Mode::Toc && app.notes.focused {
@@ -704,6 +730,21 @@ pub fn notes_mouse(mouse: &mut MouseEvent, viewer: &mut Viewer, app: &mut App) -
             mouse.kind = MouseEventKind::Moved;
             true
         }
+        /* Ctrl-click on a page tag in the note goes there */
+        (MouseEventKind::Down(_), Some((col, row)), true)
+            if mouse.modifiers.contains(KeyModifiers::CONTROL)
+                && app.notes.picker.is_none() =>
+        {
+            let page = app.notes.editor.as_ref().and_then(|editor| {
+                let text = editor.text();
+                tags::tag_at(text.get(row as usize)?, col as usize)
+            });
+            if let Some(page) = page {
+                go_to_tag(&page, viewer, app);
+            }
+            mouse.kind = MouseEventKind::Moved;
+            true
+        }
         (kind, Some((col, row)), true) => {
             if let Some(picker) = &mut app.notes.picker {
                 if matches!(kind, MouseEventKind::Down(_)) {
@@ -771,4 +812,23 @@ fn resize_toc(step: i16, app: &mut App) {
     ui::set_toc_percent(percent);
     save_panel_sizes();
     app.message = Some(format!("Contents {}% wide", ui::toc_percent()));
+}
+
+/* Moves the PDF to the page a tag names: the page printed with it, or else that page of
+ * the file. The note keeps the keys. */
+fn go_to_tag(page: &str, viewer: &mut Viewer, app: &mut App) {
+    let target = viewer.find_label(page).or_else(|| {
+        page.parse::<usize>()
+            .ok()
+            .filter(|n| *n >= 1 && *n <= viewer.pages())
+            .map(|n| n - 1)
+    });
+    match target {
+        Some(index) => {
+            app.jumps.record(viewer.spot());
+            let _ = viewer.jump(index);
+            app.message = Some(format!("Page {}", page));
+        }
+        None => app.message = Some(format!("No page {} in this PDF", page)),
+    }
 }

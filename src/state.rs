@@ -263,8 +263,11 @@ const GROUPS: [Group; 9] = [
             ConfigAction::NewNote,
             ConfigAction::WidenNote,
             ConfigAction::NarrowNote,
+            ConfigAction::TagPage,
+            ConfigAction::GoToTag,
         ],
         &[
+            ("Ctrl+click", "On a page tag in the note: go to the page"),
             ("type", "In the picker: find a note"),
             ("Up Down", "In the picker: move"),
             ("Enter", "In the picker: open"),
