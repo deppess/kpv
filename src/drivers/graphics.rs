@@ -118,14 +118,13 @@ pub fn terminal_graphics_display_image(
 /* Images at a z-index below -1,073,741,824 are drawn behind cells with a colored
  * background, which lets an opaque panel cover them, and every negative z-index is
  * behind text. From the bottom up: pages, the ruler over them, the tint of a
- * see-through panel, the tint of the selected entry in it, and a layer's box. */
+ * see-through panel, and the tint of the selected entry in it. */
 pub const PAGE_Z: i64 = -1_073_741_830;
 /* A coarse whole page under the sharp part of a page, showing where that ends */
 pub const UNDER_Z: i64 = -1_073_741_831;
 const RULER_Z: i64 = -1_073_741_829;
 pub const PANEL_Z: i64 = -1_073_741_828;
 pub const SELECTED_Z: i64 = -1_073_741_827;
-pub const LAYER_Z: i64 = -1_073_741_826;
 
 /* The ruler's image ID; page images count up from 1 and never get this far */
 pub const RULER_ID: usize = 0x7FFF_0001;
@@ -134,7 +133,6 @@ pub const CONTENTS_TINT_ID: usize = 0x7FFF_0002;
 pub const SELECTED_TINT_ID: usize = 0x7FFF_0003;
 pub const HELP_TINT_ID: usize = 0x7FFF_0004;
 pub const NOTES_TINT_ID: usize = 0x7FFF_0005;
-pub const LAYER_TINT_ID: usize = 0x7FFF_0007;
 
 /* Sends a one-pixel image, straight in the command since it's tiny. Quiet. */
 pub fn terminal_graphics_send_pixel(id: usize, rgba: [u8; 4]) -> Result<(), String> {

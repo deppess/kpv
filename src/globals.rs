@@ -55,10 +55,6 @@ template = ""
 # How wide the notes panel is, in percent of the window
 width = 45
 
-# Names for keys that start a layer, shown above what can follow them
-[layers]
-"Ctrl+Space" = "Notes"
-
 # Keys, as "key" = "Action", added to the defaults; "key" = "" unbinds a default.
 # The actions are listed in the README.
 [bindings]
@@ -102,11 +98,10 @@ width = 45
 "Esc" = "ClearSearch"
 "o" = "ShowOutline"
 "Tab" = "ShowOutline"
-"Ctrl+h" = "FocusNote"
+"Ctrl+h" = "ToggleNote"
 "Ctrl+l" = "FocusPdf"
-"Ctrl+Space x" = "HideNote"
-"Ctrl+Space p" = "TagPage"
-"Ctrl+Space g" = "GoToTag"
+"Alt+t" = "TagPage"
+"Alt+g" = "GoToTag"
 "Ctrl+=" = "WidenNote"
 "Ctrl+-" = "NarrowNote"
 "J" = "NextPage"

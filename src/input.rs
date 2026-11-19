@@ -1,7 +1,7 @@
 /* What keys, the mouse wheel and `:` commands do */
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-use keybinds::{KeyInput, KeySeq, Keybinds};
+use keybinds::{KeyInput, Keybinds};
 
 use crate::app::*;
 use crate::config::*;
@@ -234,9 +234,8 @@ pub fn handle_key(
                 app.mode = Mode::Toc;
             }
         }
-        ConfigAction::FocusNote
+        ConfigAction::ToggleNote
         | ConfigAction::FocusPdf
-        | ConfigAction::HideNote
         | ConfigAction::WidenNote
         | ConfigAction::NarrowNote
         | ConfigAction::TagPage
@@ -595,13 +594,16 @@ pub fn handle_pointer(
 /* What the notes actions do, from the PDF or from inside the editor */
 pub fn pane_action(action: ConfigAction, viewer: &mut Viewer, app: &mut App) {
     match action {
-        ConfigAction::FocusNote => {
+        /* From inside the terminal it hides; what runs there goes on, saved */
+        ConfigAction::ToggleNote if app.notes.open && app.notes.focused => {
+            app.notes.hide()
+        }
+        ConfigAction::ToggleNote => {
             if let Err(e) = app.notes.focus(editor_size()) {
                 app.message = Some(e);
             }
         }
         ConfigAction::FocusPdf => app.notes.unfocus(),
-        ConfigAction::HideNote => app.notes.hide(),
         /* A small step, so that holding the key resizes smoothly */
         ConfigAction::WidenNote | ConfigAction::NarrowNote => {
             let step: i16 = if action == ConfigAction::WidenNote {
@@ -658,7 +660,7 @@ pub fn handle_notes_key(
         pane_action(action, viewer, app);
         return;
     }
-    /* Part of a layer's keys, or a key that ended one without a match */
+    /* Part of a longer key sequence, or a key that ended one without a match */
     if was_ongoing || global.is_ongoing() {
         return;
     }
@@ -702,7 +704,7 @@ pub fn notes_mouse(mouse: &mut MouseEvent, viewer: &mut Viewer, app: &mut App) -
     let over = over_notes(app, mouse.column, mouse.row);
     match (mouse.kind, over, app.notes.focused) {
         (MouseEventKind::Down(_), Some(_), false) => {
-            pane_action(ConfigAction::FocusNote, viewer, app);
+            pane_action(ConfigAction::ToggleNote, viewer, app);
             mouse.kind = MouseEventKind::Moved;
             true
         }
@@ -744,37 +746,6 @@ pub fn notes_mouse(mouse: &mut MouseEvent, viewer: &mut Viewer, app: &mut App) -
         (_, Some(_), false) => true,
         _ => false,
     }
-}
-
-/* The layer whose first keys `matcher` has seen, when it's a named one */
-pub fn layer_popup(matcher: &Keybinds<ConfigAction>) -> Option<ui::Layer> {
-    let typed = matcher.ongoing_inputs();
-    if typed.is_empty() {
-        return None;
-    }
-    let title = CONFIG
-        .get()
-        .unwrap()
-        .layers
-        .iter()
-        .find(|(keys, _)| {
-            keys.parse::<KeySeq>()
-                .is_ok_and(|seq| seq.as_slice() == typed)
-        })?
-        .1
-        .clone();
-    let keys = matcher
-        .as_slice()
-        .iter()
-        .filter(|b| {
-            b.seq.as_slice().len() > typed.len() && b.seq.as_slice().starts_with(typed)
-        })
-        .map(|b| {
-            let rest = sequence_name(&b.seq.as_slice()[typed.len()..]);
-            (rest, b.action.describe().to_owned())
-        })
-        .collect();
-    Some(ui::Layer { title, keys })
 }
 
 /* Widens or narrows the contents panel by `step` percent of the pages' width, and

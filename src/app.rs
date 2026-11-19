@@ -64,8 +64,6 @@ pub struct App {
     /* The images placed by the last frame; `None` forces placing them again */
     pub shown: Option<Shown>,
     pub notes: Notes,
-    /* The layer whose first keys were typed, with what can follow */
-    pub layer: Option<ui::Layer>,
     /* The top edge of the frame: the PDF's title and author, or its file name */
     pub title: String,
     /* The message on show and since when, so that it goes after a while */

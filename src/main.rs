@@ -64,9 +64,6 @@ use crate::viewer::*;
 
 /* The least time between frames: 120 a second */
 const FRAME_GAP: Duration = Duration::from_millis(8);
-/* How long the first keys of a sequence wait for the rest: long, since a layer shows
- * what can follow and gives time to read it */
-const SEQUENCE_WAIT: Duration = Duration::from_secs(3600);
 
 fn main() {
     /* ============================= Check the argument ============================= */
@@ -154,7 +151,6 @@ fn main() {
         key_matcher = bindings;
         CONFIG.get_or_init(|| config);
     }
-    key_matcher.set_timeout(SEQUENCE_WAIT);
     /* While the note has the keys, only the notes keys with Ctrl or Alt are taken from
      * the editor */
     let mut global_keys = Keybinds::new(
@@ -171,7 +167,6 @@ fn main() {
             .cloned()
             .collect(),
     );
-    global_keys.set_timeout(SEQUENCE_WAIT);
     load_panel_sizes();
     /* A broken theme falls back to the default colors and says so */
     let theme_problems = match config_folder() {
@@ -239,7 +234,6 @@ fn main() {
         fatal: None,
         shown: None,
         notes: crate::notes::Notes::new(Path::new(&arg)),
-        layer: None,
         title: frame_title(None, None, &arg),
         message_shown: None,
         offset_by_hand: false,
@@ -512,11 +506,5 @@ fn handle_input(
             }
         }
     }
-    let matcher = if app.notes.open && app.notes.focused {
-        &*global_keys
-    } else {
-        &*key_matcher
-    };
-    app.layer = layer_popup(matcher);
     false
 }

@@ -276,11 +276,6 @@ pub enum Slot {
     HelpMuted,
     NotesBackground,
     NotesText,
-    LayerBackground,
-    LayerBorder,
-    LayerTitle,
-    LayerKeys,
-    LayerText,
     PagesMatch,
     PagesCurrentMatch,
     PagesRuler,
@@ -316,7 +311,7 @@ const fn spec(
     }
 }
 
-pub const SPECS: [Spec; 41] = [
+pub const SPECS: [Spec; 36] = [
     spec(
         Slot::FrameBorder,
         "frame",
@@ -557,46 +552,6 @@ pub const SPECS: [Spec; 41] = [
         "default",
         false,
         "The editor's own text color",
-    ),
-    spec(
-        Slot::LayerBackground,
-        "layer",
-        "background",
-        "black",
-        true,
-        "Behind a layer's keys",
-    ),
-    spec(
-        Slot::LayerBorder,
-        "layer",
-        "border",
-        "bright-cyan",
-        false,
-        "Its border",
-    ),
-    spec(
-        Slot::LayerTitle,
-        "layer",
-        "title",
-        "bright-cyan",
-        false,
-        "The layer's name",
-    ),
-    spec(
-        Slot::LayerKeys,
-        "layer",
-        "keys",
-        "bright-yellow",
-        false,
-        "The keys",
-    ),
-    spec(
-        Slot::LayerText,
-        "layer",
-        "text",
-        "default",
-        false,
-        "What they do",
     ),
     spec(
         Slot::PagesMatch,

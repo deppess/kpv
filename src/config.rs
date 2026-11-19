@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::path::PathBuf;
 
 use toml::{Table, Value};
 
@@ -11,9 +11,6 @@ use crate::globals::{CONFIG_FILENAME, DEFAULT_CONFIG};
 pub struct Config {
     pub viewer: ConfigViewer,
     pub notes: ConfigNotes,
-    /* Key sequences that start a layer, and the layer's name */
-    #[serde(default)]
-    pub layers: BTreeMap<String, String>,
     pub bindings: Option<Keybinds<ConfigAction>>,
 }
 
@@ -72,9 +69,8 @@ pub enum ConfigAction {
     HalfPageUp,
     FitWidth,
     FitPage,
-    FocusNote,
+    ToggleNote,
     FocusPdf,
-    HideNote,
     WidenNote,
     NarrowNote,
     TagPage,
@@ -85,7 +81,7 @@ impl ConfigAction {
     /* Every action, for the tests that check each one has a key and a place in the
      * key list */
     #[cfg(test)]
-    pub const ALL: [ConfigAction; 37] = [
+    pub const ALL: [ConfigAction; 36] = [
         ConfigAction::MoveDown,
         ConfigAction::MoveUp,
         ConfigAction::MoveLeft,
@@ -114,9 +110,8 @@ impl ConfigAction {
         ConfigAction::ToggleRuler,
         ConfigAction::ToggleInverse,
         ConfigAction::ToggleAlpha,
-        ConfigAction::FocusNote,
+        ConfigAction::ToggleNote,
         ConfigAction::FocusPdf,
-        ConfigAction::HideNote,
         ConfigAction::WidenNote,
         ConfigAction::NarrowNote,
         ConfigAction::TagPage,
@@ -129,9 +124,8 @@ impl ConfigAction {
     pub fn is_pane(self) -> bool {
         matches!(
             self,
-            ConfigAction::FocusNote
+            ConfigAction::ToggleNote
                 | ConfigAction::FocusPdf
-                | ConfigAction::HideNote
                 | ConfigAction::WidenNote
                 | ConfigAction::NarrowNote
                 | ConfigAction::TagPage
@@ -169,9 +163,8 @@ impl ConfigAction {
             ConfigAction::FitPage => "Fit the whole page",
             ConfigAction::ToggleRuler => "Reading ruler on or off",
             ConfigAction::ToggleAlpha => "Transparent page background",
-            ConfigAction::FocusNote => "Go to the notes terminal, opening it",
+            ConfigAction::ToggleNote => "Open the notes terminal, or hide it from inside",
             ConfigAction::FocusPdf => "Go to the PDF",
-            ConfigAction::HideNote => "Hide the notes terminal (helix saves)",
             ConfigAction::WidenNote => "Note wider, pages narrower",
             ConfigAction::NarrowNote => "Note narrower, pages wider",
             ConfigAction::TagPage => "Tag the page you're reading in the note",
@@ -283,7 +276,7 @@ mod tests {
         assert_eq!(count(ConfigAction::Quit), 3);
         assert!(count(ConfigAction::NextPage) > 0);
         /* Ctrl-h, bound to "", is gone */
-        assert_eq!(count(ConfigAction::FocusNote), 0);
+        assert_eq!(count(ConfigAction::ToggleNote), 0);
     }
 
     #[test]

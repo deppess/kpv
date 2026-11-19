@@ -292,9 +292,8 @@ const GROUPS: [Group; 9] = [
     (
         "Notes",
         &[
-            ConfigAction::FocusNote,
+            ConfigAction::ToggleNote,
             ConfigAction::FocusPdf,
-            ConfigAction::HideNote,
             ConfigAction::WidenNote,
             ConfigAction::NarrowNote,
             ConfigAction::TagPage,
@@ -521,7 +520,7 @@ mod tests {
         binds.bind("?", ConfigAction::ShowHelp).unwrap();
         binds.bind("g g", ConfigAction::JumpFirstPage).unwrap();
         binds.bind("Plus", ConfigAction::ZoomIn).unwrap();
-        binds.bind("Ctrl+Space x", ConfigAction::HideNote).unwrap();
+        binds.bind("Alt+t", ConfigAction::TagPage).unwrap();
         let items = help_entries(&binds);
         let keys = |k: &str| {
             items
@@ -536,7 +535,7 @@ mod tests {
                 ConfigAction::MoveDown.describe().to_owned()
             )
         );
-        assert!(keys("gg") && keys("?") && keys("+") && keys("Ctrl+Space x"));
+        assert!(keys("gg") && keys("?") && keys("+") && keys("Alt+t"));
         assert!(
             keys(":45") && keys("za zM zR"),
             "panel and command keys are listed"

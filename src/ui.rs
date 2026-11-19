@@ -667,98 +667,6 @@ fn draw_cells(out: &mut io::Stdout, cells: &[Cell], width: usize) -> io::Result<
     Ok(())
 }
 
-/* A layer's name and what its keys do */
-pub struct Layer {
-    pub title: String,
-    pub keys: Vec<(String, String)>,
-}
-
-/* Where a layer's box goes: in the bottom right corner of `inner` */
-pub fn layer_rect(inner: &Viewport, layer: &Layer) -> (u16, u16, u16, u16) {
-    let keys = layer
-        .keys
-        .iter()
-        .map(|(k, _)| columns(k))
-        .max()
-        .unwrap_or(0);
-    let what = layer
-        .keys
-        .iter()
-        .map(|(_, w)| columns(w))
-        .max()
-        .unwrap_or(0);
-    let width = (keys + what + 6)
-        .max(columns(&layer.title) + 6)
-        .min(inner.cols as usize) as u16;
-    let height = (layer.keys.len() + 2).min(inner.rows as usize) as u16;
-    (
-        inner.col + inner.cols - width,
-        inner.row + inner.rows - height,
-        width,
-        height,
-    )
-}
-
-pub fn draw_layer(layer: &Layer) -> io::Result<()> {
-    let (left, top, width, height) = layer_rect(&viewport(), layer);
-    if width < 6 || height < 3 {
-        return Ok(());
-    }
-    let inner = width as usize - 2;
-    let bg = background(Slot::LayerBackground);
-    let border = color(Slot::LayerBorder);
-    let keys = layer
-        .keys
-        .iter()
-        .map(|(k, _)| columns(k))
-        .max()
-        .unwrap_or(0);
-    let mut out = io::stdout();
-    let title = truncate(&layer.title, inner.saturating_sub(4));
-    queue!(
-        out,
-        MoveTo(left, top),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print("╭ "),
-        SetForegroundColor(color(Slot::LayerTitle)),
-        SetAttribute(Attribute::Bold),
-        Print(&title),
-        SetAttribute(Attribute::NormalIntensity),
-        SetForegroundColor(border),
-        Print(" "),
-        Print("─".repeat(inner.saturating_sub(columns(&title) + 2))),
-        Print("╮"),
-    )?;
-    for (i, (key, what)) in layer.keys.iter().take(height as usize - 2).enumerate() {
-        let text = truncate(what, inner.saturating_sub(keys + 4));
-        let pad = inner.saturating_sub(keys + 4 + columns(&text));
-        queue!(
-            out,
-            MoveTo(left, top + 1 + i as u16),
-            SetForegroundColor(border),
-            Print("│ "),
-            SetForegroundColor(color(Slot::LayerKeys)),
-            Print(format!("{:<keys$}", key)),
-            Print("  "),
-            SetForegroundColor(color(Slot::LayerText)),
-            Print(&text),
-            Print(" ".repeat(pad)),
-            SetForegroundColor(border),
-            Print(" │"),
-        )?;
-    }
-    queue!(
-        out,
-        MoveTo(left, top + height - 1),
-        SetForegroundColor(border),
-        Print("╰"),
-        Print("─".repeat(inner)),
-        Print("╯"),
-        ResetColor,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -843,8 +751,7 @@ mod tests {
     }
 
     #[test]
-    fn the_notes_panel_takes_the_left_and_the_layer_box_the_corner() {
-        let vp = Viewport::from_size(100, 40, 1000, 800);
+    fn the_notes_panel_takes_the_left_edge_to_edge() {
         let edge_to_edge = |cols, rows| {
             let mut window = Viewport::from_size(cols, rows, cols * 10, rows * 20);
             (window.col, window.row, window.cols, window.rows) = (0, 0, cols, rows);
@@ -854,15 +761,6 @@ mod tests {
         assert_eq!(notes_rect(&edge_to_edge(100, 40), 45), (0, 0, 45, 40));
         /* A narrow window keeps 12 columns for the PDF */
         assert_eq!(notes_rect(&edge_to_edge(20, 10), 45).2, 8);
-        let layer = Layer {
-            title: "Notes".to_owned(),
-            keys: vec![
-                ("x".to_owned(), "Hide".to_owned()),
-                ("s".to_owned(), "Switch".to_owned()),
-            ],
-        };
-        /* `x  Switch` plus the border and padding: 13 wide, 4 high, in the corner */
-        assert_eq!(layer_rect(&vp, &layer), (86, 35, 13, 4));
     }
 
     #[test]

@@ -42,8 +42,9 @@ From left to right it shows the mode (or the `:` / `/` prompt), the page, the zo
 | `Ctrl-r` | Dark pages: paper and text in the theme's `pages.dark_background` and `pages.dark_text`, colors keeping their hue |
 | `Ctrl-a` | Transparent page background |
 | `?` | Every key from your config, grouped, with the keys of the panels and the `:` commands; `j`/`k`, `d`/`u`, `g`/`G` and the mouse wheel scroll, `q` closes |
-| `Ctrl-h` / `Ctrl-l` | The notes terminal / the PDF (see [Notes](#notes)) |
-| `Ctrl-Space` | The notes layer: `p` tag this page in the note, `g` go to the page tagged there, `x` hide the notes terminal |
+| `Ctrl-h` | Open the notes terminal; from inside it, hide it (see [Notes](#notes)) |
+| `Ctrl-l` | Back to the PDF |
+| `Alt-t` / `Alt-g` | Tag this page in the note / go to the page tagged there |
 | `Ctrl-=` / `Ctrl--` | The note wider / narrower, and the pages narrower / wider; kept for next time |
 | `q`, `:q` | Quit |
 
@@ -91,11 +92,11 @@ The mouse wheel scrolls the panel. Clicking an entry goes there, and clicking it
 
 `Ctrl-h` opens a terminal beside the PDF, edge to edge down the left of the window, and the PDF moves over to the right in its frame, which is drawn bright while the PDF has the keys. It runs your shell, the one you log in with, starting in the notes folder, and anything runs in it as in any terminal: helix, yazi, git. It keeps running while hidden, so it comes back as you left it; `exit` closes the panel.
 
-`Ctrl-l` goes back to the PDF and `Ctrl-h` to the terminal again; a click on either side does the same. While the terminal has the keys, every key goes to it except `Ctrl-h`, `Ctrl-l`, `Ctrl-=` and `Ctrl--` (the panel wider and narrower) and `Ctrl-Space`, which shows the notes layer: `p` tags the page, `g` goes to a tagged page, `x` hides the panel. The mouse wheel scrolls whichever side it's over. The contents panel opens beside the terminal, at the left of the pages.
+`Ctrl-l` goes back to the PDF and `Ctrl-h` to the terminal again, and `Ctrl-h` from inside the terminal hides it; a click on either side switches too. While the terminal has the keys, every key goes to it except `Ctrl-h`, `Ctrl-l`, `Ctrl-=` and `Ctrl--` (the panel wider and narrower), `Alt-t` and `Alt-g`. On a Mac, Alt is Option, which kitty passes on as Alt with `macos_option_as_alt yes` in its config. The mouse wheel scrolls whichever side it's over. The contents panel opens beside the terminal, at the left of the pages.
 
 Images that programs there draw with kitty's graphics, such as yazi's previews, show in the panel too. It keeps 5,000 lines of what scrolled off: the wheel or `Shift-PageUp` and `Shift-PageDown` scroll back, unless the program takes the mouse or the whole screen itself, and typing goes back to the bottom. A copy a program makes the way terminals pass it on (OSC 52, as helix over ssh, tmux and nvim do) lands on the clipboard. viewmer adds two commands to the terminal. `hx` there is your helix with saving when focus leaves the panel, and a second after typing stops: going back to the PDF, hiding the panel, leaving the terminal window, quitting or closing the window saves the note. yazi opens notes with `hx` too. `pdfnote` opens the note named after the PDF (its stored title, or else its file name), making it from your template with a link back to the PDF if the vault doesn't have it yet, at its end; `pdfnote Some name` opens or makes the note called that.
 
-`Ctrl-Space p` writes a tag for the page you're reading where the terminal's cursor is, such as `(p. 45)`, with the number printed on the page (`(p. xiv)` in the front matter). `Ctrl-Space g` moves the PDF to the tag on the cursor's line, or else to the nearest one above it, and Ctrl-click on a tag goes there too. Tags you type yourself work the same: `p. 45`, `p.45`, `pp. 45-47`, and `p. #30` for the 30th page of the file.
+`Alt-t` writes a tag for the page you're reading where the terminal's cursor is, such as `(p. 45)`, with the number printed on the page (`(p. xiv)` in the front matter). `Alt-g` moves the PDF to the tag on the cursor's line, or else to the nearest one above it, and Ctrl-click on a tag goes there too. Tags you type yourself work the same: `p. 45`, `p.45`, `pp. 45-47`, and `p. #30` for the 30th page of the file.
 
 ## Search
 
@@ -107,14 +108,13 @@ The config is created on first run at `~/.config/viewmer/config.toml` (or under 
 
 - `[viewer]`: `scroll_step`, `zoom_step` (percent of the page width), `resolution` (pages are drawn at the screen's own resolution times this, again whenever the zoom changes, so they stay sharp when zoomed in; zoomed far in, the part in view is drawn sharp and the pages around it coarser until you get to them, so any zoom fits in the memory kitty keeps for images), `page_gap`, `invert_wheel`, `link_hints` (where a hovered link points) and `remember_position`.
 - `[notes]`: `vault` (the notes folder), `folder` (where new notes go, inside the vault, and where the terminal starts), `shell` (empty for the one you log in with), `editor` (what `pdfnote` opens), `template` (`{{title}}` becomes the note's name and `{{source}}` the link to the PDF; without `{{source}}`, the link goes on a `Links:` line or after the title) and `width` (percent of the window).
-- `[layers]`: `"keys" = "Name"`. Typing the keys of a layer shows a box with what can follow them.
-- `[bindings]`: `"key" = "Action"`, added to the default keys; `"key" = ""` unbinds a default. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `SetMark`, `GoToMark`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `HalfPageDown`, `HalfPageUp`, `ZoomIn`, `ZoomOut`, `FitWidth`, `FitPage`, `CenterViewer`, `ToggleRuler`, `ToggleInverse`, `ToggleAlpha`, `FocusNote`, `FocusPdf`, `HideNote`, `WidenNote`, `NarrowNote`, `TagPage`, `GoToTag`, `ShowHelp` and `Quit`. The notes actions bound with Ctrl or Alt also work while the note has the keys.
+- `[bindings]`: `"key" = "Action"`, added to the default keys; `"key" = ""` unbinds a default. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `JumpBack`, `JumpForward`, `SetMark`, `GoToMark`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `HalfPageDown`, `HalfPageUp`, `ZoomIn`, `ZoomOut`, `FitWidth`, `FitPage`, `CenterViewer`, `ToggleRuler`, `ToggleInverse`, `ToggleAlpha`, `ToggleNote`, `FocusPdf`, `WidenNote`, `NarrowNote`, `TagPage`, `GoToTag`, `ShowHelp` and `Quit`. The notes actions bound with Ctrl or Alt also work while the note has the keys.
 
 ## Colors
 
 Colors are in `theme.toml` next to the config, written on first run with every color and what it's for. A color can be `"#1e2030"`, `"#fff"`, `"rgb(30, 32, 48)"`, `"hsl(230, 23%, 15%)"`, a palette number like `8`, a name like `"cyan"` or `"bright-black"`, or `"default"` for the terminal's own color.
 
-Panel backgrounds (`contents.background`, `contents.selected`, `help.background`, `notes.background`, `layer.background`) and the colors painted on pages (`pages.match`, `pages.current_match`, `pages.ruler`) can be see-through: add two hex digits of opacity, from `00` (clear) to `ff` (solid), as in `"#1e2030cc"`. The page then shows through the panel. A page color without them is mixed in at a strength that keeps the text readable.
+Panel backgrounds (`contents.background`, `contents.selected`, `help.background`, `notes.background`) and the colors painted on pages (`pages.match`, `pages.current_match`, `pages.ruler`) can be see-through: add two hex digits of opacity, from `00` (clear) to `ff` (solid), as in `"#1e2030cc"`. The page then shows through the panel. A page color without them is mixed in at a strength that keeps the text readable.
 
 A mistake in the file doesn't stop viewmer: that color keeps its default, and the status bar says what's wrong.
 

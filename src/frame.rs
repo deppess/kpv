@@ -97,9 +97,6 @@ pub fn draw_frame(
     if app.mode == Mode::Toc {
         draw_toc(app, viewer, section).map_err(write_error)?;
     }
-    if let Some(layer) = &app.layer {
-        ui::draw_layer(layer).map_err(write_error)?;
-    }
 
     let active = app.notes.open && !app.notes.focused;
     ui::draw_frame(&app.title, &status_segments(app, viewer, section), active)
@@ -179,14 +176,6 @@ fn tints(app: &App) -> Vec<Tint> {
             rect,
         );
     }
-    if let Some(layer) = &app.layer {
-        add(
-            Slot::LayerBackground,
-            graphics::LAYER_TINT_ID,
-            graphics::LAYER_Z,
-            ui::layer_rect(&viewport(), layer),
-        );
-    }
     tints
 }
 
@@ -205,7 +194,7 @@ fn draw_notes(app: &App) -> io::Result<()> {
 /* Where to show the editor's cursor, and how, while the note has the keys */
 fn editor_cursor(app: &App) -> Option<(u16, u16, SetCursorStyle)> {
     let notes = &app.notes;
-    if !(notes.open && notes.focused) || app.layer.is_some() {
+    if !(notes.open && notes.focused) {
         return None;
     }
     let (col, row, shape) = notes.terminal.as_ref()?.cursor()?;
@@ -228,7 +217,6 @@ pub fn send_tints() {
         (Slot::ContentsSelected, graphics::SELECTED_TINT_ID),
         (Slot::HelpBackground, graphics::HELP_TINT_ID),
         (Slot::NotesBackground, graphics::NOTES_TINT_ID),
-        (Slot::LayerBackground, graphics::LAYER_TINT_ID),
     ] {
         let p = paint(slot);
         if let (true, Some([r, g, b]), Some(a)) = (p.see_through(), p.rgb(), p.alpha()) {
