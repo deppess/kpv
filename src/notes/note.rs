@@ -183,8 +183,8 @@ pub fn last_line(text: &str) -> usize {
     text.lines().count() + usize::from(text.ends_with('\n') || text.is_empty())
 }
 
-/* helix's config with saving on leaving turned on, for the helix in the panel only:
- * leaving the panel tells it focus was lost, and it saves */
+/* helix's config for the helix in the panel only: it saves when focus leaves the panel,
+ * and a second after typing stops, so a crash or a killed viewer loses next to nothing */
 pub fn helix_config(user: Option<&str>) -> String {
     let mut doc = user
         .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
@@ -201,6 +201,18 @@ pub fn helix_config(user: Option<&str>) -> String {
         _ => toml_edit::Table::new(),
     };
     auto_save.insert("focus-lost", toml_edit::value(true));
+    let mut delay = match auto_save.remove("after-delay") {
+        Some(toml_edit::Item::Table(table)) => table,
+        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(inline))) => {
+            inline.into_table()
+        }
+        _ => toml_edit::Table::new(),
+    };
+    delay.insert("enable", toml_edit::value(true));
+    if !delay.contains_key("timeout") {
+        delay.insert("timeout", toml_edit::value(1000));
+    }
+    auto_save.insert("after-delay", toml_edit::Item::Table(delay));
     editor.insert("auto-save", toml_edit::Item::Table(auto_save));
     doc.to_string()
 }
@@ -306,15 +318,26 @@ mod tests {
             Some(true)
         );
 
-        let kept = helix_config(Some("[editor.auto-save]\nafter-delay.enable = true\n"));
+        assert_eq!(
+            parsed["editor"]["auto-save"]["after-delay"]["timeout"].as_integer(),
+            Some(1000)
+        );
+
+        let kept = helix_config(Some(
+            "[editor.auto-save]\nafter-delay.enable = false\nafter-delay.timeout = 300\n",
+        ));
         let parsed: toml::Table = kept.parse().unwrap();
         assert_eq!(
             parsed["editor"]["auto-save"]["focus-lost"].as_bool(),
             Some(true)
         );
-        assert!(parsed["editor"]["auto-save"]["after-delay"]["enable"]
-            .as_bool()
-            .unwrap());
+        let delay = &parsed["editor"]["auto-save"]["after-delay"];
+        assert_eq!(delay["enable"].as_bool(), Some(true));
+        assert_eq!(
+            delay["timeout"].as_integer(),
+            Some(300),
+            "the user's delay stays"
+        );
 
         let none: toml::Table = helix_config(None).parse().unwrap();
         assert_eq!(

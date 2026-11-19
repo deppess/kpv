@@ -42,6 +42,27 @@ pub struct FileState {
     /* Marks set with `m`, by letter */
     #[serde(default)]
     pub marks: BTreeMap<String, Spot>,
+    #[serde(default)]
+    pub layout: Layout,
+}
+
+/* How the window was laid out, so a file opens as it was left */
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct Layout {
+    /* The notes panel was open, and had the keys */
+    #[serde(default)]
+    pub notes: bool,
+    #[serde(default)]
+    pub notes_focused: bool,
+    /* The contents panel was open */
+    #[serde(default)]
+    pub contents: bool,
+    /* The reading ruler's page and row */
+    #[serde(default)]
+    pub ruler: Option<[usize; 2]>,
+    /* How far right the view was, from 0 to 1 of the way, for pages wider than it */
+    #[serde(default)]
+    pub left: f32,
 }
 
 /* The state files of one document: one under its permanent PDF ID, one under its path.
@@ -138,6 +159,9 @@ impl Store {
             let tmp = file.with_extension(format!("tmp{}", std::process::id()));
             let mut out = fs::File::create(&tmp)?;
             out.write_all(text.as_bytes())?;
+            /* On the disk before it replaces the old one, so a crash or a power cut
+             * leaves one or the other whole */
+            out.sync_all()?;
             drop(out);
             fs::rename(&tmp, &file)?;
         }
@@ -162,6 +186,7 @@ fn same_place(a: &FileState, b: &FileState) -> bool {
         && a.page_offset == b.page_offset
         && a.marks == b.marks
         && a.note == b.note
+        && a.layout == b.layout
         && a.id == b.id
         && a.path == b.path
 }

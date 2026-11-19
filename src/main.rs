@@ -18,6 +18,7 @@ mod theme;
 mod threads;
 mod ui;
 mod viewer;
+mod watch;
 
 use std::collections::BTreeMap;
 use std::hash::{BuildHasher, Hasher, RandomState};
@@ -84,6 +85,12 @@ fn main() {
         eprintln!("viewmer: no such file: {}", arg);
         std::process::exit(1);
     }
+    /* ===================== Run under the crash watcher ===================== */
+    if std::env::var_os(watch::WATCHED).is_none() {
+        let args: Vec<String> = std::env::args().collect();
+        watch::run(&args, reset_screen);
+    }
+
     let title = Path::new(&arg)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -112,6 +119,7 @@ fn main() {
     /* ========================== Cook the terminal on panic ========================= */
     let default_panic = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        watch::log(&format!("viewmer panicked: {}", info));
         restore_terminal();
         default_panic(info);
     }));
@@ -196,11 +204,13 @@ fn main() {
         mode: Mode::Normal,
         count: None,
         search: None,
-        message: reload_error.or_else(|| match theme_problems.as_slice() {
-            [] => None,
-            [one] => Some(format!("theme.toml: {}", one)),
-            [first, rest @ ..] => {
-                Some(format!("theme.toml: {} (and {} more)", first, rest.len()))
+        message: recovered_message().or(reload_error).or_else(|| {
+            match theme_problems.as_slice() {
+                [] => None,
+                [one] => Some(format!("theme.toml: {}", one)),
+                [first, rest @ ..] => {
+                    Some(format!("theme.toml: {} (and {} more)", first, rest.len()))
+                }
             }
         }),
         link: None,
@@ -452,6 +462,13 @@ fn main() {
 /* Gives the terminal back as it was. Errors are ignored: this also runs when the
  * terminal is gone, and from the panic hook. */
 fn restore_terminal() {
+    reset_screen();
+    let _ = disable_raw_mode();
+}
+
+/* Turns off what viewmer turned on in the terminal and leaves its screen; the crash
+ * watcher does this too, for a viewer that couldn't */
+fn reset_screen() {
     let _ = execute!(
         io::stdout(),
         PopKeyboardEnhancementFlags,
@@ -462,7 +479,18 @@ fn restore_terminal() {
         SetCursorStyle::DefaultUserShape,
         Show
     );
-    let _ = disable_raw_mode();
+}
+
+/* What the viewer says when the watcher started it again after a crash */
+fn recovered_message() -> Option<String> {
+    std::env::var_os(watch::RECOVERED)?;
+    let log = watch::crash_log()
+        .map(|f| f.display().to_string())
+        .unwrap_or_default();
+    Some(format!(
+        "Started again after a crash; what happened is in {}",
+        log
+    ))
 }
 
 /* Gives the terminal back and exits with `message` */

@@ -508,6 +508,24 @@ impl Viewer {
         self.bound_viewer();
     }
 
+    /* How far right the view is over pages wider than it: 0 at their left edge, 1 at
+     * their right */
+    pub fn left(&self) -> f32 {
+        let (width, view) = (self.max_width * self.scale, viewport().width());
+        if width <= view {
+            return 0.0;
+        }
+        (-self.offset.0 / (width - view)).clamp(0.0, 1.0)
+    }
+
+    pub fn set_left(&mut self, left: f32) {
+        let (width, view) = (self.max_width * self.scale, viewport().width());
+        if width > view && left.is_finite() {
+            self.offset.0 = -left.clamp(0.0, 1.0) * (width - view);
+            self.bound_viewer();
+        }
+    }
+
     /* Fits the page width to the viewport again after the viewport changed width,
      * keeping the zoom and the place being read */
     pub fn refit(&mut self) {

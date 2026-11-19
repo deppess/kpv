@@ -1048,6 +1048,7 @@ dependencies = [
  "crossterm",
  "dirs",
  "keybinds",
+ "libc",
  "mupdf",
  "notify",
  "open",

@@ -60,9 +60,13 @@ Page numbers follow the book. When the PDF carries printed page numbers (roman n
 
 ## Remembered position
 
-Each file opens where you left it: the same page, the same spot on it and the same zoom, along with its marks and page offset. The position is written two seconds after the view stops moving, on quitting, and when the terminal window closes or viewmer is stopped with `kill`. A position is kept per page rather than in pixels, so it comes back right in a window of another size.
+Each file opens as you left it: the same page, the same spot on it, the same zoom and the same spot across a wide page, with the note open and the contents panel and reading ruler as they were, along with its marks, its note and its page offset. All of it is written a moment after the view stops changing, on quitting, and when the terminal window closes or viewmer is stopped with `kill`. A position is kept per page rather than in pixels, so it comes back right in a window of another size.
 
 Each file gets one small TOML file in `~/.local/state/viewmer/` (or under `$XDG_STATE_HOME`); files from where earlier versions kept them move there on their own. A file is found by the permanent ID inside the PDF, so moving or renaming it keeps its place, and by its path, for PDFs without an ID and for LaTeX output that gets a new one on every build. Files are replaced in one step, so a crash or two viewers on one file never leave a broken one, and a broken or unknown file is ignored. `remember_position = false` turns it off.
+
+## Crashes
+
+viewmer runs under a small watcher. If the viewer crashes, the watcher gives the terminal back, writes what happened to `~/.local/state/viewmer/crash.log` and starts it again, and it opens as it was, from the layout it keeps saved; the status bar says it started again. After three crashes in a minute it stops trying. The note in the notes panel is saved a second after typing stops as well as on leaving it, so a crash loses next to nothing of it either. Saved files are written in full to the disk before they replace the old ones, so a crash or a power cut never leaves half a file.
 
 ## Table of contents
 

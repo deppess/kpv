@@ -14,13 +14,14 @@ use crate::notes::{EditorSize, Notes};
 use crate::outline::Toc;
 use crate::ruler::{Lines, Ruler};
 use crate::state::*;
-use crate::store::{FileState, Store};
+use crate::store::{FileState, Layout, Store};
 use crate::threads::renderer::{Renderer, RendererAction, RendererResult};
 use crate::ui;
 use crate::viewer::*;
 
-/* How long the view must stay put before its position is written */
-pub const SAVE_DELAY: Duration = Duration::from_secs(2);
+/* How long the view must stay put before its position is written: soon, so that
+ * little is lost if the viewer is killed or crashes */
+pub const SAVE_DELAY: Duration = Duration::from_millis(300);
 
 /* When the slow toggles last ran, so that holding their key can't flood the renderer */
 #[derive(Default)]
@@ -186,8 +187,37 @@ pub fn open_store(file: &str, id: Option<String>, viewer: &mut Viewer, app: &mut
                 move_note_link(note, Path::new(old), Path::new(store.path()));
             }
         }
+        restore_layout(&state.layout, viewer, app);
     }
     app.store = Some(store);
+}
+
+/* Lays the window out as it was: the note open first, since the zoom is kept relative
+ * to the width the pages had beside it */
+fn restore_layout(layout: &Layout, viewer: &mut Viewer, app: &mut App) {
+    if layout.notes && app.notes.remembered.as_ref().is_some_and(|n| n.is_file()) {
+        if app.notes.focus(editor_size()).is_ok() && !layout.notes_focused {
+            app.notes.unfocus();
+        }
+        apply_layout(viewer, app);
+    }
+    viewer.set_left(layout.left);
+    if layout.contents {
+        app.mode = Mode::Toc;
+    }
+    app.ruler = layout.ruler.map(|[page, row]| Ruler { page, row });
+}
+
+/* The layout to remember */
+fn layout(viewer: &Viewer, app: &App) -> Layout {
+    Layout {
+        notes: app.notes.open,
+        notes_focused: app.notes.open && app.notes.focused,
+        contents: app.mode == Mode::Toc,
+        ruler: app.ruler.map(|r| [r.page, r.row]),
+        /* Rounded, so that tiny moves don't count as changes */
+        left: ((viewer.left() * 1000.0).round() / 1000.0).abs(),
+    }
 }
 
 /* Points the note's link to the PDF at its new place */
@@ -222,6 +252,7 @@ pub fn file_state(viewer: &Viewer, app: &App) -> FileState {
             .remembered
             .as_ref()
             .map(|p| p.to_string_lossy().into_owned()),
+        layout: layout(viewer, app),
         ..FileState::default()
     }
 }
