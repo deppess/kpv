@@ -161,14 +161,6 @@ pub fn style<D: Display>(val: D) -> StyledContent<D> {
 ///
 /// This does not always provide a good result.
 pub fn available_color_count() -> u16 {
-    #[cfg(windows)]
-    {
-        // Check if we're running in a pseudo TTY, which supports true color.
-        // Fall back to env vars otherwise for other terminals on Windows.
-        if crate::ansi_support::supports_ansi() {
-            return u16::MAX;
-        }
-    }
 
     const DEFAULT: u16 = 8;
     env::var("COLORTERM")
@@ -210,10 +202,6 @@ impl Command for SetForegroundColor {
         write!(f, csi!("{}m"), Colored::ForegroundColor(self.0))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::windows::set_foreground_color(self.0)
-    }
 }
 
 /// A command that sets the the background color.
@@ -234,10 +222,6 @@ impl Command for SetBackgroundColor {
         write!(f, csi!("{}m"), Colored::BackgroundColor(self.0))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::windows::set_background_color(self.0)
-    }
 }
 
 /// A command that sets the the underline color.
@@ -258,13 +242,6 @@ impl Command for SetUnderlineColor {
         write!(f, csi!("{}m"), Colored::UnderlineColor(self.0))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "SetUnderlineColor not supported by winapi.",
-        ))
-    }
 }
 
 /// A command that optionally sets the foreground and/or background color.
@@ -313,16 +290,6 @@ impl Command for SetColors {
         }
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        if let Some(color) = self.0.foreground {
-            sys::windows::set_foreground_color(color)?;
-        }
-        if let Some(color) = self.0.background {
-            sys::windows::set_background_color(color)?;
-        }
-        Ok(())
-    }
 }
 
 /// A command that sets an attribute.
@@ -340,11 +307,6 @@ impl Command for SetAttribute {
         write!(f, csi!("{}m"), self.0.sgr())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        // attributes are not supported by WinAPI.
-        Ok(())
-    }
 }
 
 /// A command that sets several attributes.
@@ -367,11 +329,6 @@ impl Command for SetAttributes {
         Ok(())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        // attributes are not supported by WinAPI.
-        Ok(())
-    }
 }
 
 /// A command that sets a style (colors and attributes).
@@ -400,15 +357,7 @@ impl Command for SetStyle {
         Ok(())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        panic!("tried to execute SetStyle command using WinAPI, use ANSI instead");
-    }
 
-    #[cfg(windows)]
-    fn is_ansi_code_supported(&self) -> bool {
-        true
-    }
 }
 
 /// A command that prints styled content.
@@ -467,10 +416,6 @@ impl<D: Display> Command for PrintStyledContent<D> {
         Ok(())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        Ok(())
-    }
 }
 
 /// A command that resets the colors back to default.
@@ -486,10 +431,6 @@ impl Command for ResetColor {
         f.write_str(csi!("0m"))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::windows::reset()
-    }
 }
 
 /// A command that prints the given displayable type.
@@ -503,15 +444,7 @@ impl<T: Display> Command for Print<T> {
         write!(f, "{}", self.0)
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        panic!("tried to execute Print command using WinAPI, use ANSI instead");
-    }
 
-    #[cfg(windows)]
-    fn is_ansi_code_supported(&self) -> bool {
-        true
-    }
 }
 
 impl<T: Display> Display for Print<T> {
@@ -542,24 +475,10 @@ mod tests {
     // This allows other terminals on Windows to still assert env var support.
     macro_rules! skip_windows_ansi_supported {
         () => {
-            #[cfg(windows)]
-            {
-                if crate::ansi_support::supports_ansi() {
-                    return;
-                }
-            }
         };
     }
 
     #[cfg_attr(windows, test)]
-    #[cfg(windows)]
-    fn windows_always_truecolor() {
-        // This should always be true on supported Windows 10+,
-        // but downlevel Windows clients and other terminals may fail `cargo test` otherwise.
-        if crate::ansi_support::supports_ansi() {
-            assert_eq!(u16::MAX, available_color_count());
-        };
-    }
 
     #[test]
     fn colorterm_overrides_term() {

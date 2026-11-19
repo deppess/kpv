@@ -64,10 +64,6 @@ impl Command for MoveTo {
         write!(f, csi!("{};{}H"), self.1 + 1, self.0 + 1)
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::move_to(self.0, self.1)
-    }
 }
 
 /// A command that moves the terminal cursor down the given number of lines,
@@ -86,13 +82,6 @@ impl Command for MoveToNextLine {
         Ok(())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        if self.0 != 0 {
-            sys::move_to_next_line(self.0)?;
-        }
-        Ok(())
-    }
 }
 
 /// A command that moves the terminal cursor up the given number of lines,
@@ -111,13 +100,6 @@ impl Command for MoveToPreviousLine {
         Ok(())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        if self.0 != 0 {
-            sys::move_to_previous_line(self.0)?;
-        }
-        Ok(())
-    }
 }
 
 /// A command that moves the terminal cursor to the given column on the current row.
@@ -134,10 +116,6 @@ impl Command for MoveToColumn {
         Ok(())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::move_to_column(self.0)
-    }
 }
 
 /// A command that moves the terminal cursor to the given row on the current column.
@@ -154,10 +132,6 @@ impl Command for MoveToRow {
         Ok(())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::move_to_row(self.0)
-    }
 }
 
 /// A command that moves the terminal cursor a given number of rows up.
@@ -175,10 +149,6 @@ impl Command for MoveUp {
         Ok(())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::move_up(self.0)
-    }
 }
 
 /// A command that moves the terminal cursor a given number of columns to the right.
@@ -196,10 +166,6 @@ impl Command for MoveRight {
         Ok(())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::move_right(self.0)
-    }
 }
 
 /// A command that moves the terminal cursor a given number of rows down.
@@ -217,10 +183,6 @@ impl Command for MoveDown {
         Ok(())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::move_down(self.0)
-    }
 }
 
 /// A command that moves the terminal cursor a given number of columns to the left.
@@ -238,10 +200,6 @@ impl Command for MoveLeft {
         Ok(())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::move_left(self.0)
-    }
 }
 
 /// A command that saves the current terminal cursor position.
@@ -260,10 +218,6 @@ impl Command for SavePosition {
         f.write_str("\x1B7")
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::save_position()
-    }
 }
 
 /// A command that restores the saved terminal cursor position.
@@ -282,10 +236,6 @@ impl Command for RestorePosition {
         f.write_str("\x1B8")
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::restore_position()
-    }
 }
 
 /// A command that hides the terminal cursor.
@@ -301,10 +251,6 @@ impl Command for Hide {
         f.write_str(csi!("?25l"))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::show_cursor(false)
-    }
 }
 
 /// A command that shows the terminal cursor.
@@ -320,10 +266,6 @@ impl Command for Show {
         f.write_str(csi!("?25h"))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::show_cursor(true)
-    }
 }
 
 /// A command that enables blinking of the terminal cursor.
@@ -339,10 +281,6 @@ impl Command for EnableBlinking {
     fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
         f.write_str(csi!("?12h"))
     }
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        Ok(())
-    }
 }
 
 /// A command that disables blinking of the terminal cursor.
@@ -357,10 +295,6 @@ pub struct DisableBlinking;
 impl Command for DisableBlinking {
     fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
         f.write_str(csi!("?12l"))
-    }
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        Ok(())
     }
 }
 
@@ -401,10 +335,6 @@ impl Command for SetCursorStyle {
         }
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        Ok(())
-    }
 }
 
 impl_display!(for MoveTo);

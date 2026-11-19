@@ -55,10 +55,6 @@ impl Filter for EventFilter {
         matches!(*event, InternalEvent::Event(_))
     }
 
-    #[cfg(windows)]
-    fn eval(&self, _: &InternalEvent) -> bool {
-        true
-    }
 }
 
 #[cfg(test)]

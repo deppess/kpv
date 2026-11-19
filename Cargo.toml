@@ -8,7 +8,7 @@ base64 = "0.22.1"
 mupdf = { default-features = false, version = "0.6" }
 serde = { version = "1.0.219", features = ["derive"] }
 toml = { version = "0.9", default-features = false, features = ["parse", "display", "serde", "std"] }
-crossterm = { version = "0.29", features = ["serde"] }
+crossterm = "0.29"
 keybinds = { version = "0.2", features = ["crossterm", "serde"] }
 unicode-width = "0.2"
 alacritty_terminal = "0.26"

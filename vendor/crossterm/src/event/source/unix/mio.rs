@@ -3,8 +3,6 @@ use std::{collections::VecDeque, io, time::Duration};
 use mio::{unix::SourceFd, Events, Interest, Poll, Token};
 use signal_hook_mio::v1_0::Signals;
 
-#[cfg(feature = "event-stream")]
-use crate::event::sys::Waker;
 use crate::event::{
     source::EventSource, sys::unix::parse::parse_event, timeout::PollTimeout, Event, InternalEvent,
 };
@@ -13,8 +11,6 @@ use crate::terminal::sys::file_descriptor::{tty_fd, FileDesc};
 // Tokens to identify file descriptor
 const TTY_TOKEN: Token = Token(0);
 const SIGNAL_TOKEN: Token = Token(1);
-#[cfg(feature = "event-stream")]
-const WAKE_TOKEN: Token = Token(2);
 
 // I (@zrzka) wasn't able to read more than 1_022 bytes when testing
 // reading on macOS/Linux -> we don't need bigger buffer and 1k of bytes
@@ -28,8 +24,6 @@ pub(crate) struct UnixInternalEventSource {
     tty_buffer: [u8; TTY_BUFFER_SIZE],
     tty_fd: FileDesc<'static>,
     signals: Signals,
-    #[cfg(feature = "event-stream")]
-    waker: Waker,
 }
 
 impl UnixInternalEventSource {
@@ -48,8 +42,6 @@ impl UnixInternalEventSource {
         let mut signals = Signals::new([signal_hook::consts::SIGWINCH])?;
         registry.register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)?;
 
-        #[cfg(feature = "event-stream")]
-        let waker = Waker::new(registry, WAKE_TOKEN)?;
 
         Ok(UnixInternalEventSource {
             poll,
@@ -58,8 +50,6 @@ impl UnixInternalEventSource {
             tty_buffer: [0u8; TTY_BUFFER_SIZE],
             tty_fd: input_fd,
             signals,
-            #[cfg(feature = "event-stream")]
-            waker,
         })
     }
 }
@@ -134,13 +124,6 @@ impl EventSource for UnixInternalEventSource {
                             ))));
                         }
                     }
-                    #[cfg(feature = "event-stream")]
-                    WAKE_TOKEN => {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::Interrupted,
-                            "Poll operation was woken up by `Waker::wake`",
-                        ));
-                    }
                     _ => unreachable!("Synchronize Evented handle registration & token handling"),
                 }
             }
@@ -152,10 +135,6 @@ impl EventSource for UnixInternalEventSource {
         }
     }
 
-    #[cfg(feature = "event-stream")]
-    fn waker(&self) -> Waker {
-        self.waker.clone()
-    }
 }
 
 //

@@ -2,10 +2,6 @@ use std::{collections::vec_deque::VecDeque, io, time::Duration};
 
 #[cfg(unix)]
 use crate::event::source::unix::UnixInternalEventSource;
-#[cfg(windows)]
-use crate::event::source::windows::WindowsEventSource;
-#[cfg(feature = "event-stream")]
-use crate::event::sys::Waker;
 use crate::event::{filter::Filter, source::EventSource, timeout::PollTimeout, InternalEvent};
 
 /// Can be used to read `InternalEvent`s.
@@ -17,8 +13,6 @@ pub(crate) struct InternalEventReader {
 
 impl Default for InternalEventReader {
     fn default() -> Self {
-        #[cfg(windows)]
-        let source = WindowsEventSource::new();
         #[cfg(unix)]
         let source = UnixInternalEventSource::new();
 
@@ -33,11 +27,6 @@ impl Default for InternalEventReader {
 }
 
 impl InternalEventReader {
-    /// Returns a `Waker` allowing to wake/force the `poll` method to return `Ok(false)`.
-    #[cfg(feature = "event-stream")]
-    pub(crate) fn waker(&self) -> Waker {
-        self.source.as_ref().expect("reader source not set").waker()
-    }
 
     pub(crate) fn poll<F>(&mut self, timeout: Option<Duration>, filter: &F) -> io::Result<bool>
     where
@@ -428,9 +417,5 @@ mod tests {
             Ok(None)
         }
 
-        #[cfg(feature = "event-stream")]
-        fn waker(&self) -> super::super::sys::Waker {
-            unimplemented!();
-        }
     }
 }

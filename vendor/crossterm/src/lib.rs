@@ -66,9 +66,6 @@
 //!     [`EnableLineWrap`](terminal/struct.EnableLineWrap.html)
 //!   - Alternate screen - [`EnterAlternateScreen`](terminal/struct.EnterAlternateScreen.html),
 //!     [`LeaveAlternateScreen`](terminal/struct.LeaveAlternateScreen.html)
-//! - Module [`clipboard`](clipboard/index.html) (requires
-//!     [`feature = "osc52"`](#optional-features))
-//!   - Clipboard - [`CopyToClipboard`](clipboard/struct.CopyToClipboard.html)
 //!
 //! ### Command Execution
 //!
@@ -227,8 +224,6 @@
 //! }
 //!```
 //!
-#![cfg_attr(feature = "document-features", doc = "## Feature Flags")]
-#![cfg_attr(feature = "document-features", doc = document_features::document_features!())]
 //!
 //! [write]: https://doc.rust-lang.org/std/io/trait.Write.html
 //! [stdout]: https://doc.rust-lang.org/std/io/fn.stdout.html
@@ -250,15 +245,7 @@ pub mod terminal;
 /// A module to query if the current instance is a tty.
 pub mod tty;
 
-/// A module for clipboard interaction
-#[cfg(feature = "osc52")]
-pub mod clipboard;
 
-#[cfg(windows)]
-/// A module that exposes one function to check if the current terminal supports ANSI sequences.
-pub mod ansi_support;
 mod command;
 pub(crate) mod macros;
 
-#[cfg(all(windows, not(feature = "windows")))]
-compile_error!("Compiling on Windows with \"windows\" feature disabled. Feature \"windows\" should only be disabled when project will never be compiled on Windows.");

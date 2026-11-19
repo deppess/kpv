@@ -1,7 +1,5 @@
 use std::fmt::Display;
 
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
 use super::super::SetAttribute;
 
@@ -65,7 +63,6 @@ macro_rules! Attribute {
         /// println!("{}", "Underlined text".underlined());
         /// println!("{}", "Negative text".negative());
         /// ```
-        #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
         #[non_exhaustive]
         pub enum Attribute {

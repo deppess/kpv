@@ -2,8 +2,6 @@ use parking_lot::Once;
 use std::fmt::{self, Formatter};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
 
 use crate::style::{parse_next_u8, Color};
 
@@ -11,7 +9,6 @@ use crate::style::{parse_next_u8, Color};
 ///
 /// This can be converted to a [Colors](struct.Colors.html) by calling `into()` and applied
 /// using the [SetColors](struct.SetColors.html) command.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub enum Colored {
     /// A foreground color.

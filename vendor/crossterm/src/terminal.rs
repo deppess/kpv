@@ -85,12 +85,6 @@
 
 use std::{fmt, io};
 
-#[cfg(windows)]
-use crossterm_winapi::{ConsoleMode, Handle, ScreenBuffer};
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-#[cfg(windows)]
-use winapi::um::wincon::ENABLE_WRAP_AT_EOL_OUTPUT;
 
 #[doc(no_inline)]
 use crate::Command;
@@ -110,10 +104,6 @@ pub fn is_raw_mode_enabled() -> io::Result<bool> {
         Ok(sys::is_raw_mode_enabled())
     }
 
-    #[cfg(windows)]
-    {
-        sys::is_raw_mode_enabled()
-    }
 }
 
 /// Enables raw mode.
@@ -163,14 +153,6 @@ impl Command for DisableLineWrap {
         f.write_str(csi!("?7l"))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        let screen_buffer = ScreenBuffer::current()?;
-        let console_mode = ConsoleMode::from(screen_buffer.handle().clone());
-        let new_mode = console_mode.mode()? & !ENABLE_WRAP_AT_EOL_OUTPUT;
-        console_mode.set_mode(new_mode)?;
-        Ok(())
-    }
 }
 
 /// Enable line wrapping.
@@ -182,14 +164,6 @@ impl Command for EnableLineWrap {
         f.write_str(csi!("?7h"))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        let screen_buffer = ScreenBuffer::current()?;
-        let console_mode = ConsoleMode::from(screen_buffer.handle().clone());
-        let new_mode = console_mode.mode()? | ENABLE_WRAP_AT_EOL_OUTPUT;
-        console_mode.set_mode(new_mode)?;
-        Ok(())
-    }
 }
 
 /// A command that switches to alternate screen.
@@ -222,12 +196,6 @@ impl Command for EnterAlternateScreen {
         f.write_str(csi!("?1049h"))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        let alternate_screen = ScreenBuffer::create()?;
-        alternate_screen.show()?;
-        Ok(())
-    }
 }
 
 /// A command that switches back to the main screen.
@@ -260,16 +228,9 @@ impl Command for LeaveAlternateScreen {
         f.write_str(csi!("?1049l"))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        let screen_buffer = ScreenBuffer::from(Handle::current_out_handle()?);
-        screen_buffer.show()?;
-        Ok(())
-    }
 }
 
 /// Different ways to clear the terminal buffer.
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub enum ClearType {
     /// All cells.
@@ -302,10 +263,6 @@ impl Command for ScrollUp {
         Ok(())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        sys::scroll_up(self.0)
-    }
 }
 
 /// A command that scrolls the terminal screen a given number of rows down.
@@ -324,10 +281,6 @@ impl Command for ScrollDown {
         Ok(())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        sys::scroll_down(self.0)
-    }
 }
 
 /// A command that clears the terminal screen buffer.
@@ -352,10 +305,6 @@ impl Command for Clear {
         })
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        sys::clear(self.0)
-    }
 }
 
 /// A command that sets the terminal buffer size `(columns, rows)`.
@@ -371,10 +320,6 @@ impl Command for SetSize {
         write!(f, csi!("8;{};{}t"), self.1, self.0)
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        sys::set_size(self.0, self.1)
-    }
 }
 
 /// A command that sets the terminal title
@@ -390,10 +335,6 @@ impl<T: fmt::Display> Command for SetTitle<T> {
         write!(f, "\x1B]0;{}\x07", &self.0)
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        sys::set_window_title(&self.0)
-    }
 }
 
 /// A command that instructs the terminal emulator to begin a synchronized frame.
@@ -437,16 +378,7 @@ impl Command for BeginSynchronizedUpdate {
         f.write_str(csi!("?2026h"))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        Ok(())
-    }
 
-    #[cfg(windows)]
-    #[inline]
-    fn is_ansi_code_supported(&self) -> bool {
-        true
-    }
 }
 
 /// A command that instructs the terminal to end a synchronized frame.
@@ -490,16 +422,7 @@ impl Command for EndSynchronizedUpdate {
         f.write_str(csi!("?2026l"))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> io::Result<()> {
-        Ok(())
-    }
 
-    #[cfg(windows)]
-    #[inline]
-    fn is_ansi_code_supported(&self) -> bool {
-        true
-    }
 }
 
 impl_display!(for ScrollUp);

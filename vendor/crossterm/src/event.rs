@@ -123,15 +123,11 @@
 pub(crate) mod filter;
 pub(crate) mod read;
 pub(crate) mod source;
-#[cfg(feature = "event-stream")]
-pub(crate) mod stream;
 pub(crate) mod sys;
 pub(crate) mod timeout;
 
 #[cfg(feature = "derive-more")]
 use derive_more::derive::IsVariant;
-#[cfg(feature = "event-stream")]
-pub use stream::EventStream;
 
 use crate::event::{
     filter::{EventFilter, Filter},
@@ -289,7 +285,6 @@ bitflags! {
     /// See <https://sw.kovidgoyal.net/kitty/keyboard-protocol/#progressive-enhancement> for more information.
     ///
     /// Alternate keys and Unicode codepoints are not yet supported by crossterm.
-    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(transparent))]
     #[derive(Debug, PartialOrd, PartialEq, Eq, Clone, Copy, Hash)]
     pub struct KeyboardEnhancementFlags: u8 {
         /// Represent Escape and modified keys using CSI-u sequences, so they can be unambiguously
@@ -336,15 +331,7 @@ impl Command for EnableMouseCapture {
         ))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::windows::enable_mouse_capture()
-    }
 
-    #[cfg(windows)]
-    fn is_ansi_code_supported(&self) -> bool {
-        false
-    }
 }
 
 /// A command that disables mouse event capturing.
@@ -365,15 +352,7 @@ impl Command for DisableMouseCapture {
         ))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        sys::windows::disable_mouse_capture()
-    }
 
-    #[cfg(windows)]
-    fn is_ansi_code_supported(&self) -> bool {
-        false
-    }
 }
 
 /// A command that enables focus event emission.
@@ -389,11 +368,6 @@ impl Command for EnableFocusChange {
         f.write_str(csi!("?1004h"))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        // Focus events are always enabled on Windows
-        Ok(())
-    }
 }
 
 /// A command that disables focus event emission.
@@ -405,11 +379,6 @@ impl Command for DisableFocusChange {
         f.write_str(csi!("?1004l"))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        // Focus events can't be disabled on Windows
-        Ok(())
-    }
 }
 
 /// A command that enables [bracketed paste mode](https://en.wikipedia.org/wiki/Bracketed-paste).
@@ -428,13 +397,6 @@ impl Command for EnableBracketedPaste {
         f.write_str(csi!("?2004h"))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "Bracketed paste not implemented in the legacy Windows API.",
-        ))
-    }
 }
 
 /// A command that disables bracketed paste mode.
@@ -448,10 +410,6 @@ impl Command for DisableBracketedPaste {
         f.write_str(csi!("?2004l"))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        Ok(())
-    }
 }
 
 /// A command that enables the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/), which adds extra information to keyboard events and removes ambiguity for modifier keys.
@@ -499,20 +457,7 @@ impl Command for PushKeyboardEnhancementFlags {
         write!(f, "{}{}u", csi!(">"), self.0.bits())
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        use std::io;
 
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Keyboard progressive enhancement not implemented for the legacy Windows API.",
-        ))
-    }
-
-    #[cfg(windows)]
-    fn is_ansi_code_supported(&self) -> bool {
-        false
-    }
 }
 
 /// A command that disables extra kinds of keyboard events.
@@ -528,24 +473,10 @@ impl Command for PopKeyboardEnhancementFlags {
         f.write_str(csi!("<1u"))
     }
 
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        use std::io;
 
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Keyboard progressive enhancement not implemented for the legacy Windows API.",
-        ))
-    }
-
-    #[cfg(windows)]
-    fn is_ansi_code_supported(&self) -> bool {
-        false
-    }
 }
 
 /// Represents an event.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "derive-more", derive(IsVariant))]
 #[cfg_attr(not(feature = "bracketed-paste"), derive(Copy))]
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Hash)]
@@ -799,7 +730,6 @@ impl Event {
 /// Some platforms/terminals does not report all key modifiers
 /// combinations for all mouse event types. For example - macOS reports
 /// `Ctrl` + left mouse button click as a right mouse button click.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct MouseEvent {
     /// The kind of mouse event that was caused.
@@ -821,7 +751,6 @@ pub struct MouseEvent {
 /// Some platforms/terminals do not report mouse button for the
 /// `MouseEventKind::Up` and `MouseEventKind::Drag` events. `MouseButton::Left`
 /// is returned if we don't know which button was used.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "derive-more", derive(IsVariant))]
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum MouseEventKind {
@@ -844,7 +773,6 @@ pub enum MouseEventKind {
 }
 
 /// Represents a mouse button.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "derive-more", derive(IsVariant))]
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum MouseButton {
@@ -862,7 +790,6 @@ bitflags! {
     /// **Note:** `SUPER`, `HYPER`, and `META` can only be read if
     /// [`KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES`] has been enabled with
     /// [`PushKeyboardEnhancementFlags`].
-    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(transparent))]
     #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
     pub struct KeyModifiers: u8 {
         const SHIFT = 0b0000_0001;
@@ -904,8 +831,6 @@ impl Display for KeyModifiers {
                 KeyModifiers::SHIFT => f.write_str("Shift")?,
                 #[cfg(unix)]
                 KeyModifiers::CONTROL => f.write_str("Control")?,
-                #[cfg(windows)]
-                KeyModifiers::CONTROL => f.write_str("Ctrl")?,
                 #[cfg(target_os = "macos")]
                 KeyModifiers::ALT => f.write_str("Option")?,
                 #[cfg(not(target_os = "macos"))]
@@ -926,7 +851,6 @@ impl Display for KeyModifiers {
 }
 
 /// Represents a keyboard event kind.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "derive-more", derive(IsVariant))]
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum KeyEventKind {
@@ -942,7 +866,6 @@ bitflags! {
     /// [`KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES`] has been enabled with
     /// [`PushKeyboardEnhancementFlags`].
     #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
-    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(transparent))]
     pub struct KeyEventState: u8 {
         /// The key event origins from the keypad.
         const KEYPAD = 0b0000_0001;
@@ -959,7 +882,6 @@ bitflags! {
 }
 
 /// Represents a key event.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, PartialOrd, Ord, Clone, Copy)]
 pub struct KeyEvent {
     /// The key itself.
@@ -1100,7 +1022,6 @@ impl Hash for KeyEvent {
 
 /// Represents a media key (as part of [`KeyCode::Media`]).
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum MediaKeyCode {
     /// Play media key.
     Play,
@@ -1152,7 +1073,6 @@ impl Display for MediaKeyCode {
 
 /// Represents a modifier key (as part of [`KeyCode::Modifier`]).
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ModifierKeyCode {
     /// Left Shift key.
     LeftShift,
@@ -1249,7 +1169,6 @@ impl Display for ModifierKeyCode {
 /// Represents a key.
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
 #[cfg_attr(feature = "derive-more", derive(IsVariant))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum KeyCode {
     /// Backspace key (Delete on macOS, Backspace on other platforms).
     Backspace,
