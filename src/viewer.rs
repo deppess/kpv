@@ -150,6 +150,9 @@ pub struct Viewer {
     page_offset: i32,
 
     pub images: HashMap<usize, Arc<RwLock<Image>>>,
+    /* Coarse whole pages kept under a sharp part, so that past its edge the page shows
+     * rather than nothing until the next part arrives */
+    under: HashMap<usize, Arc<RwLock<Image>>>,
     invalidated: HashMap<usize, ()>,
     /* What was last asked of the renderer for each page */
     scheduled4render: HashMap<usize, Request>,
@@ -181,6 +184,7 @@ impl Viewer {
                 labels: Vec::new(),
                 page_offset: 0,
                 images: HashMap::new(),
+                under: HashMap::new(),
                 invalidated: HashMap::new(),
                 scheduled4render: HashMap::new(),
                 wanted: HashSet::new(),
@@ -653,8 +657,30 @@ impl Viewer {
     /* Stores a rendered page, or with `None` forgets it. The oldest pages are dropped
      * while the images take more memory than allowed. */
     pub fn handle_image(&mut self, page: usize, image: Option<Arc<RwLock<Image>>>) {
-        self.remove_image(page);
-        let Some(image) = image else { return };
+        let Some(image) = image else {
+            self.remove_image(page);
+            return;
+        };
+        /* A sharp part of a page arriving over a whole one keeps the whole one under
+         * it; a whole one arriving needs nothing under it */
+        let whole = self.whole_page(page);
+        let is_whole = |i: &Arc<RwLock<Image>>| covers(i.read().unwrap().region(), whole);
+        let stale = self.invalidated.remove(&page).is_some();
+        let new_whole = is_whole(&image);
+        if let Some(old) = self.images.remove(&page) {
+            if !new_whole && !stale && is_whole(&old) {
+                if let Some(previous) = self.under.insert(page, old) {
+                    self.forget(previous);
+                }
+            } else {
+                self.forget(old);
+            }
+        }
+        if new_whole || stale {
+            if let Some(under) = self.under.remove(&page) {
+                self.forget(under);
+            }
+        }
 
         self.memory_used += image.read().unwrap().size();
         self.last_rendered.push_back(page);
@@ -691,11 +717,30 @@ impl Viewer {
     }
 
     fn remove_image(&mut self, page: usize) {
-        if let Some(old) = self.images.remove(&page) {
-            self.memory_used =
-                self.memory_used.saturating_sub(old.read().unwrap().size());
+        for old in [self.images.remove(&page), self.under.remove(&page)]
+            .into_iter()
+            .flatten()
+        {
+            self.forget(old);
         }
         self.invalidated.remove(&page);
+    }
+
+    fn forget(&mut self, image: Arc<RwLock<Image>>) {
+        self.memory_used = self
+            .memory_used
+            .saturating_sub(image.read().unwrap().size());
+    }
+
+    /* All of a page, in page units */
+    fn whole_page(&self, page: usize) -> Region {
+        let gap = CONFIG.get().unwrap().viewer.page_gap;
+        [
+            0.0,
+            0.0,
+            self.page_width(page).unwrap_or(0.0),
+            (self.page_height(page).unwrap_or(0.0) - gap).max(0.0),
+        ]
     }
 
     /* Asks the renderer for the page when its image is missing, out of date, or
@@ -707,7 +752,7 @@ impl Viewer {
         page: usize,
         rect: Option<DisplayRect>,
         renderer: &Renderer,
-    ) -> Option<PagePlacement> {
+    ) -> Vec<PagePlacement> {
         let scale = self.render_scale();
         let size = (
             self.page_width(page).unwrap_or(0.0),
@@ -754,16 +799,35 @@ impl Viewer {
             self.scheduled4render.insert(page, request);
         }
 
-        let image = self.images.get(&page)?.read().unwrap();
+        let mut placed = Vec::new();
+        if let (Some(rect), Some(under)) = (rect, self.under.get(&page)) {
+            let under = under.read().unwrap();
+            if let Some(at) = under.placement(rect, self.scale) {
+                placed.push(PagePlacement {
+                    page,
+                    image: under.id(),
+                    at: Some(at),
+                    under: true,
+                });
+            }
+        }
+        let Some(image) = self.images.get(&page) else {
+            return placed;
+        };
+        let image = image.read().unwrap();
         let at = match rect {
-            Some(rect) => Some(image.placement(rect, self.scale)?),
+            Some(rect) => image.placement(rect, self.scale),
             None => None,
         };
-        Some(PagePlacement {
-            page,
-            image: image.id(),
-            at,
-        })
+        if rect.is_none() || at.is_some() {
+            placed.push(PagePlacement {
+                page,
+                image: image.id(),
+                at,
+                under: false,
+            });
+        }
+        placed
     }
 
     /* The page images a frame shows: the pages in view, and a few before and after

@@ -160,16 +160,26 @@ pub struct PagePlacement {
     pub page: usize,
     pub image: usize,
     pub at: Option<Placement>,
+    /* The coarse whole page under the sharp part */
+    pub under: bool,
 }
 
 impl PagePlacement {
     pub fn place(&self) -> Result<(), String> {
         match &self.at {
             Some(p) => terminal_graphics_display_image(
-                self.image, p.col, p.row, p.crop, p.cols, p.rows,
+                self.image, p.col, p.row, p.crop, p.cols, p.rows, self.under,
             ),
             /* The top-left padding pixel, which is clear */
-            None => terminal_graphics_display_image(self.image, 1, 1, (1, 1, 1, 1), 2, 2),
+            None => terminal_graphics_display_image(
+                self.image,
+                1,
+                1,
+                (1, 1, 1, 1),
+                2,
+                2,
+                self.under,
+            ),
         }
     }
 }

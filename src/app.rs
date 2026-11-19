@@ -529,6 +529,7 @@ mod tests {
                 cols: 10,
                 rows: 5,
             }),
+            under: false,
         }
     }
 
