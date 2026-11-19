@@ -33,3 +33,9 @@ codegen-units = 1
 panic = "abort"
 # Line numbers for backtraces without the full debug info, which is most of target/
 debug = "line-tables-only"
+
+# Dependencies, MuPDF above all, are built without debug info and optimized: smaller and
+# faster tests
+[profile.dev.package."*"]
+debug = false
+opt-level = 2
