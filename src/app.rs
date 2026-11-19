@@ -66,6 +66,44 @@ pub struct App {
     pub notes: Notes,
     /* The layer whose first keys were typed, with what can follow */
     pub layer: Option<ui::Layer>,
+    /* The top edge of the frame: the PDF's title and author, or its file name */
+    pub title: String,
+}
+
+/* Whether a title stored in a PDF is a real one, not what an export tool left there:
+ * `Microsoft Word - draft.docx`, `untitled`, a file name */
+pub fn real_title(title: &str) -> bool {
+    let lower = title.trim().to_lowercase();
+    let file_like = [
+        ".doc", ".docx", ".pdf", ".tex", ".indd", ".dvi", ".ps", ".odt", ".pages",
+    ]
+    .iter()
+    .any(|ext| lower.ends_with(ext));
+    !(lower.is_empty()
+        || file_like
+        || lower.starts_with("microsoft word")
+        || matches!(
+            lower.as_str(),
+            "untitled" | "title" | "document" | "unknown"
+        ))
+}
+
+/* The frame's title: `Title — Author` when the PDF stores a real title, its file name
+ * otherwise */
+pub fn frame_title(title: Option<&str>, author: Option<&str>, file: &str) -> String {
+    let name = || {
+        std::path::Path::new(file)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| file.to_owned())
+    };
+    match title.filter(|t| real_title(t)) {
+        Some(title) => match author.map(str::trim).filter(|a| !a.is_empty()) {
+            Some(author) => format!("{} — {}", title.trim(), author),
+            None => title.trim().to_owned(),
+        },
+        None => name(),
+    }
 }
 
 /* Every image placed in a frame. A frame that would place the same ones leaves them
@@ -396,8 +434,10 @@ pub fn handle_result(
             outline,
             id,
             title,
+            author,
         } => {
-            app.notes.title = title;
+            app.title = frame_title(title.as_deref(), author.as_deref(), file);
+            app.notes.title = title.filter(|t| real_title(t));
             let uninit = viewer.is_uninit();
 
             viewer.update_metadata(
@@ -499,6 +539,25 @@ mod tests {
             cols: 30,
             rows: 1,
         }
+    }
+
+    #[test]
+    fn the_frame_shows_the_title_the_pdf_stores() {
+        assert_eq!(
+            frame_title(
+                Some("The Art of Mac Malware"),
+                Some("Patrick Wardle"),
+                "/a/x.pdf"
+            ),
+            "The Art of Mac Malware — Patrick Wardle"
+        );
+        assert_eq!(frame_title(Some("Notes"), None, "/a/x.pdf"), "Notes");
+        assert_eq!(
+            frame_title(Some("Microsoft Word - draft3.docx"), Some("me"), "/a/x.pdf"),
+            "x.pdf"
+        );
+        assert_eq!(frame_title(Some("untitled"), None, "/a/x.pdf"), "x.pdf");
+        assert_eq!(frame_title(None, Some("me"), "/a/x.pdf"), "x.pdf");
     }
 
     #[test]

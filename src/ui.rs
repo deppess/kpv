@@ -1,5 +1,7 @@
 use std::io;
 
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
 use crossterm::{
     cursor::MoveTo,
     queue,
@@ -145,17 +147,32 @@ impl Segment {
     }
 }
 
-/* Cuts `text` to at most `width` characters, marking the cut with `…` */
-pub fn truncate(text: &str, width: usize) -> String {
-    if text.chars().count() <= width {
+/* Cuts `text` to at most `max` columns, marking the cut with `…` */
+pub fn truncate(text: &str, max: usize) -> String {
+    if columns(text) <= max {
         return text.to_owned();
     }
-    if width == 0 {
+    if max == 0 {
         return String::new();
     }
-    let mut out: String = text.chars().take(width - 1).collect();
+    let mut out = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        let w = UnicodeWidthChar::width(c).unwrap_or(0);
+        if used + w > max - 1 {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
     out.push('…');
     out
+}
+
+/* How many columns `text` takes in the terminal: two for wide characters such as
+ * Chinese or Japanese ones and most emoji */
+pub fn columns(text: &str) -> usize {
+    UnicodeWidthStr::width(text)
 }
 
 /* Draws the rounded frame with `title` in the top edge and `segments` in the
@@ -173,7 +190,7 @@ pub fn draw_frame(title: &str, segments: &[Segment]) -> io::Result<()> {
 
     /* Top edge with the title */
     let title = truncate(title, inner.saturating_sub(2));
-    let title_len = title.chars().count() + 2;
+    let title_len = columns(&title) + 2;
     queue!(
         out,
         MoveTo(0, 0),
@@ -204,12 +221,12 @@ pub fn draw_frame(title: &str, segments: &[Segment]) -> io::Result<()> {
     let mut used = 1;
     for (i, segment) in segments.iter().enumerate() {
         let sep = if i == 0 { "" } else { " │ " };
-        let room = inner.saturating_sub(used + sep.chars().count() + 1);
+        let room = inner.saturating_sub(used + columns(sep) + 1);
         if room == 0 {
             break;
         }
         let text = truncate(&segment.text, room);
-        used += sep.chars().count() + text.chars().count();
+        used += columns(sep) + columns(&text);
         queue!(
             out,
             SetForegroundColor(color(Slot::StatusSeparator)),
@@ -243,7 +260,7 @@ pub fn help_lines(items: &[HelpItem]) -> Vec<HelpLine> {
     let width = items
         .iter()
         .filter_map(|i| match i {
-            HelpItem::Keys(keys, _) => Some(keys.chars().count()),
+            HelpItem::Keys(keys, _) => Some(columns(keys)),
             HelpItem::Heading(_) => None,
         })
         .max()
@@ -280,7 +297,7 @@ pub fn help_lines(items: &[HelpItem]) -> Vec<HelpLine> {
 pub fn help_rect(vp: &Viewport, lines: &[HelpLine]) -> (u16, u16, u16, u16) {
     let longest = lines
         .iter()
-        .map(|l| l.keys.chars().count() + l.what.chars().count())
+        .map(|l| columns(&l.keys) + columns(&l.what))
         .max()
         .unwrap_or(0);
     let width = (longest + 4).clamp(24, (vp.cols as usize).saturating_sub(2).max(24));
@@ -331,7 +348,7 @@ pub fn draw_help(lines: &[HelpLine], scroll: usize) -> io::Result<()> {
         let line = lines.get(scroll + i);
         if let Some(heading) = line.filter(|l| l.heading) {
             let text = truncate(&heading.what, inner.saturating_sub(2));
-            let pad = inner.saturating_sub(2 + text.chars().count());
+            let pad = inner.saturating_sub(2 + columns(&text));
             queue!(
                 out,
                 MoveTo(left, top + 1 + i as u16),
@@ -351,7 +368,7 @@ pub fn draw_help(lines: &[HelpLine], scroll: usize) -> io::Result<()> {
             .map(|l| (l.keys.as_str(), l.what.as_str()))
             .unwrap_or(("", ""));
         let text = truncate(&format!("{}{}", keys, what), inner.saturating_sub(2));
-        let pad = inner.saturating_sub(2 + text.chars().count());
+        let pad = inner.saturating_sub(2 + columns(&text));
         let split = text
             .char_indices()
             .nth(keys.chars().count())
@@ -375,7 +392,7 @@ pub fn draw_help(lines: &[HelpLine], scroll: usize) -> io::Result<()> {
         out,
         MoveTo(left, top + height as u16 - 1),
         Print("╰"),
-        Print("─".repeat(inner.saturating_sub(hint.chars().count()))),
+        Print("─".repeat(inner.saturating_sub(columns(hint)))),
         SetForegroundColor(color(Slot::HelpMuted)),
         Print(hint),
         SetForegroundColor(border),
@@ -477,7 +494,7 @@ pub fn draw_toc(rows: &[TocRow], position: &str, footer: &str) -> io::Result<()>
         Print(title),
         SetAttribute(Attribute::NormalIntensity),
         SetForegroundColor(border),
-        Print("─".repeat(inner.saturating_sub(title.len() + position.chars().count()))),
+        Print("─".repeat(inner.saturating_sub(title.len() + columns(&position)))),
         SetForegroundColor(color(Slot::ContentsMuted)),
         Print(&position),
         SetForegroundColor(border),
@@ -515,7 +532,7 @@ pub fn draw_toc(rows: &[TocRow], position: &str, footer: &str) -> io::Result<()>
         SetForegroundColor(color(Slot::ContentsMuted)),
         Print(format!(" {} ", footer)),
         SetForegroundColor(border),
-        Print("─".repeat(inner.saturating_sub(footer.chars().count() + 2))),
+        Print("─".repeat(inner.saturating_sub(columns(&footer) + 2))),
         Print("╯"),
         ResetColor,
     )
@@ -531,11 +548,11 @@ fn draw_toc_row(out: &mut io::Stdout, row: &TocRow, inner: usize) -> io::Result<
     let (muted, current) = (color(Slot::ContentsMuted), color(Slot::ContentsCurrent));
     let indent = 1 + 2 * row.depth.min(inner / 4);
     let label = truncate(&row.label, inner / 3);
-    let label_len = label.chars().count();
+    let label_len = columns(&label);
     /* indent, marker and a space, the title, a space, the label, a space */
     let room = inner.saturating_sub(indent + 2 + 1 + label_len + 1);
     let title = truncate(&row.title, room);
-    let pad = room - title.chars().count();
+    let pad = room - columns(&title);
     let text = if row.current {
         current
     } else {
@@ -614,7 +631,7 @@ pub fn draw_notes(
         SetAttribute(Attribute::NormalIntensity),
         SetForegroundColor(border),
         Print(" "),
-        Print("─".repeat(inner.saturating_sub(title.chars().count() + 2))),
+        Print("─".repeat(inner.saturating_sub(columns(&title) + 2))),
         Print("╮"),
     )?;
     for row in 0..height - 2 {
@@ -635,7 +652,7 @@ pub fn draw_notes(
                 let last = row == height - 3;
                 if last {
                     let text = truncate(footer, inner.saturating_sub(2));
-                    let pad = inner.saturating_sub(text.chars().count() + 1);
+                    let pad = inner.saturating_sub(columns(&text) + 1);
                     queue!(
                         out,
                         SetBackgroundColor(bg),
@@ -741,9 +758,9 @@ fn draw_picker_row(
         Slot::NotesBackground
     });
     let hint = truncate(&row.hint, width / 3);
-    let room = width.saturating_sub(hint.chars().count() + 3);
+    let room = width.saturating_sub(columns(&hint) + 3);
     let label = truncate(&row.label, room);
-    let pad = room - label.chars().count();
+    let pad = room - columns(&label);
     queue!(
         out,
         SetBackgroundColor(bg),
@@ -780,17 +797,17 @@ pub fn layer_rect(inner: &Viewport, layer: &Layer) -> (u16, u16, u16, u16) {
     let keys = layer
         .keys
         .iter()
-        .map(|(k, _)| k.chars().count())
+        .map(|(k, _)| columns(k))
         .max()
         .unwrap_or(0);
     let what = layer
         .keys
         .iter()
-        .map(|(_, w)| w.chars().count())
+        .map(|(_, w)| columns(w))
         .max()
         .unwrap_or(0);
     let width = (keys + what + 6)
-        .max(layer.title.chars().count() + 6)
+        .max(columns(&layer.title) + 6)
         .min(inner.cols as usize) as u16;
     let height = (layer.keys.len() + 2).min(inner.rows as usize) as u16;
     (
@@ -812,7 +829,7 @@ pub fn draw_layer(layer: &Layer) -> io::Result<()> {
     let keys = layer
         .keys
         .iter()
-        .map(|(k, _)| k.chars().count())
+        .map(|(k, _)| columns(k))
         .max()
         .unwrap_or(0);
     let mut out = io::stdout();
@@ -829,12 +846,12 @@ pub fn draw_layer(layer: &Layer) -> io::Result<()> {
         SetAttribute(Attribute::NormalIntensity),
         SetForegroundColor(border),
         Print(" "),
-        Print("─".repeat(inner.saturating_sub(title.chars().count() + 2))),
+        Print("─".repeat(inner.saturating_sub(columns(&title) + 2))),
         Print("╮"),
     )?;
     for (i, (key, what)) in layer.keys.iter().take(height as usize - 2).enumerate() {
         let text = truncate(what, inner.saturating_sub(keys + 4));
-        let pad = inner.saturating_sub(keys + 4 + text.chars().count());
+        let pad = inner.saturating_sub(keys + 4 + columns(&text));
         queue!(
             out,
             MoveTo(left, top + 1 + i as u16),
@@ -880,6 +897,13 @@ mod tests {
     fn viewport_survives_tiny_terminals() {
         let vp = Viewport::from_size(1, 1, 0, 0);
         assert_eq!((vp.cols, vp.rows), (1, 1));
+    }
+
+    #[test]
+    fn wide_characters_take_two_columns() {
+        assert_eq!(columns("ノート.pdf"), 10);
+        assert_eq!(truncate("ノートのPDF", 6), "ノー…");
+        assert_eq!(columns(&truncate("ノートのPDF", 6)), 5);
     }
 
     #[test]

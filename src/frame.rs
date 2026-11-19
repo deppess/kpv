@@ -36,7 +36,6 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
  * when they differ from the last frame's, so that a frame that only changes text
  * (prompts, the contents panel, the status bar) costs kitty no image work. */
 pub fn draw_frame(
-    title: &str,
     viewer: &mut Viewer,
     renderer: &Renderer,
     app: &mut App,
@@ -103,7 +102,8 @@ pub fn draw_frame(
         ui::draw_layer(layer).map_err(write_error)?;
     }
 
-    ui::draw_frame(title, &status_segments(app, viewer, section)).map_err(write_error)?;
+    ui::draw_frame(&app.title, &status_segments(app, viewer, section))
+        .map_err(write_error)?;
     match editor_cursor(app) {
         Some((col, row, style)) => queue!(out, MoveTo(col, row), style, Show),
         None => queue!(out, Hide),

@@ -63,8 +63,9 @@ pub enum RendererResult {
         outline: Vec<OutlineEntry>,
         /* The permanent half of the PDF's /ID */
         id: Option<String>,
-        /* The title stored in the PDF */
+        /* The title and the author stored in the PDF */
         title: Option<String>,
+        author: Option<String>,
     },
     Image {
         page: usize,
@@ -167,11 +168,14 @@ impl<'a> RendererInnerState<'a> {
             .map(|o| outline::flatten(&o))
             .unwrap_or_default();
         let id = store::document_id(&document);
-        let title = document
-            .metadata(MetadataName::Title)
-            .ok()
-            .map(|t| t.trim().to_owned())
-            .filter(|t| !t.is_empty());
+        let stored = |name| {
+            document
+                .metadata(name)
+                .ok()
+                .map(|t| t.trim().to_owned())
+                .filter(|t| !t.is_empty())
+        };
+        let (title, author) = (stored(MetadataName::Title), stored(MetadataName::Author));
 
         self.document = document;
         self.cache = cache;
@@ -187,6 +191,7 @@ impl<'a> RendererInnerState<'a> {
             outline,
             id,
             title,
+            author,
         })
     }
 }

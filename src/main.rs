@@ -91,11 +91,6 @@ fn main() {
         watch::run(&args, reset_screen);
     }
 
-    let title = Path::new(&arg)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| arg.clone());
-
     /* ============================= Uncook the terminal ============================= */
     if let Err(e) = enable_raw_mode().and_then(|_| {
         execute!(
@@ -230,6 +225,7 @@ fn main() {
         shown: None,
         notes: crate::notes::Notes::new(Path::new(&arg)),
         layer: None,
+        title: frame_title(None, None, &arg),
     };
 
     let mut current_mouse = MouseEvent {
@@ -431,7 +427,7 @@ fn main() {
          * this frame's */
         while gr.try_recv().is_ok() {}
 
-        let displayed = match draw_frame(&title, &mut viewer, &renderer, &mut app) {
+        let displayed = match draw_frame(&mut viewer, &renderer, &mut app) {
             Ok(displayed) => displayed,
             Err(e) => {
                 app.fatal = Some(e);
