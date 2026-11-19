@@ -1,11 +1,18 @@
-/* The editor in the notes panel: a program run in a pseudo-terminal, whose screen a
- * terminal emulator keeps so the panel can draw it */
+/* The notes panel's program, run in a pseudo-terminal, whose screen a terminal
+ * emulator keeps so the panel can draw it */
 
 use std::{
-    io::{Read, Write},
+    fs::File,
+    io::{self, Read, Write},
+    os::{
+        fd::{AsRawFd, FromRawFd, OwnedFd},
+        unix::process::CommandExt,
+    },
     path::Path,
+    process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
     thread,
+    time::{Duration, Instant},
 };
 
 use alacritty_terminal::{
@@ -18,9 +25,8 @@ use alacritty_terminal::{
 use crossbeam_channel::{unbounded, Receiver};
 use crossterm::{
     event::{KeyEvent, KeyModifiers, MouseEventKind},
-    style::Color,
+    style::{Attribute, Attributes, Color},
 };
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 
 use super::graphics::{Piece, Splitter, Translator};
 use super::keys::{encode_focus, encode_key, encode_mouse, encode_paste};
@@ -54,26 +60,29 @@ impl Dimensions for Size {
     }
 }
 
-/* One cell of the editor's screen, ready to draw */
+/* One cell of the program's screen, ready to draw */
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cell {
-    /* Empty for the second half of a wide character, which isn't drawn */
-    pub text: String,
+    /* `\0` for the second half of a wide character, which isn't drawn */
+    pub c: char,
+    /* Combining marks drawn with it; empty, and so not allocated, nearly always */
+    pub marks: Vec<char>,
+    pub style: Style,
+}
+
+/* Colors and attributes; reverse video goes to the outer terminal, which does it with
+ * its own default colors */
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Style {
     pub fg: Color,
     pub bg: Color,
-    pub bold: bool,
-    pub dim: bool,
-    pub italic: bool,
-    pub underline: bool,
-    pub strike: bool,
-    /* Reverse video, which the outer terminal does with its own default colors */
-    pub reverse: bool,
+    pub attributes: Attributes,
 }
 
 pub struct Pane {
-    master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
-    child: Box<dyn Child + Send + Sync>,
+    /* The terminal's side of the pseudo-terminal */
+    master: File,
+    child: Child,
     term: Term<Proxy>,
     parser: Processor,
     events: Arc<Mutex<Vec<Event>>>,
@@ -104,19 +113,17 @@ impl Pane {
         pixels: (u16, u16),
         env: &[(String, String)],
     ) -> Result<Self, String> {
-        let pty = native_pty_system()
-            .openpty(pty_size(cols, rows, pixels))
+        let (master, slave) = open_pty(cols, rows, pixels)
             .map_err(|x| format!("Could not open a terminal for {}: {}", program, x))?;
-        let mut command = CommandBuilder::new(program);
-        command.args(args);
-        command.cwd(cwd);
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
-        /* The program runs in viewmer's panel, not in kitty: told it's kitty, yazi
-         * would try to draw images the panel can't show */
-        for (name, value) in env {
-            command.env(name, value);
-        }
+        let mut command = Command::new(program);
+        command
+            .args(args)
+            .current_dir(cwd)
+            .env("TERM", "xterm-256color")
+            .env("COLORTERM", "truecolor")
+            .envs(env.iter().map(|(k, v)| (k, v)));
+        /* The program runs in a terminal of its own, not in kitty's window, which
+         * kitty's variables would point it at */
         for name in [
             "KITTY_WINDOW_ID",
             "KITTY_PID",
@@ -128,20 +135,25 @@ impl Pane {
         ] {
             command.env_remove(name);
         }
-        let child = pty
-            .slave
-            .spawn_command(command)
-            .map_err(|x| format!("Could not start {}: {}", program, x))?;
-        drop(pty.slave);
-
-        let mut reader = pty
-            .master
-            .try_clone_reader()
-            .map_err(|x| format!("Could not read from {}: {}", program, x))?;
-        let writer = pty
-            .master
-            .take_writer()
-            .map_err(|x| format!("Could not write to {}: {}", program, x))?;
+        let stdio = |fd: &OwnedFd| fd.try_clone().map(Stdio::from);
+        let failed = |x: io::Error| format!("Could not start {}: {}", program, x);
+        command
+            .stdin(stdio(&slave).map_err(failed)?)
+            .stdout(stdio(&slave).map_err(failed)?)
+            .stderr(Stdio::from(slave));
+        /* Its own session, with the pseudo-terminal as its terminal, so that job
+         * control and ^C work in it */
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) == -1 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let child = command.spawn().map_err(failed)?;
+        let master = File::from(master);
+        let mut reader = master.try_clone().map_err(failed)?;
         let (sender, output) = unbounded::<Vec<u8>>();
         thread::spawn(move || {
             let mut buffer = [0u8; 65536];
@@ -168,8 +180,7 @@ impl Pane {
             rows: rows.max(1) as usize,
         };
         Ok(Self {
-            master: pty.master,
-            writer,
+            master,
             child,
             term: Term::new(config, &size, Proxy(events.clone())),
             parser: Processor::new(),
@@ -271,10 +282,7 @@ impl Pane {
         if bytes.is_empty() {
             return;
         }
-        let _ = self
-            .writer
-            .write_all(bytes)
-            .and_then(|_| self.writer.flush());
+        let _ = self.master.write_all(bytes);
     }
 
     pub fn mode(&self) -> TermMode {
@@ -317,7 +325,8 @@ impl Pane {
             return;
         }
         (self.cols, self.rows, self.pixels) = (cols, rows, pixels);
-        let _ = self.master.resize(pty_size(cols, rows, pixels));
+        let size = winsize(cols, rows, pixels);
+        unsafe { libc::ioctl(self.master.as_raw_fd(), libc::TIOCSWINSZ, &size) };
         self.term.resize(Size {
             cols: cols.max(1) as usize,
             rows: rows.max(1) as usize,
@@ -329,7 +338,17 @@ impl Pane {
         !matches!(self.child.try_wait(), Ok(None))
     }
 
+    /* Hangs up on the program, as closing a terminal window does, and makes sure it
+     * ends */
     pub fn kill(&mut self) {
+        if self.exited() {
+            return;
+        }
+        unsafe { libc::kill(self.child.id() as i32, libc::SIGHUP) };
+        let end = Instant::now() + Duration::from_millis(300);
+        while !self.exited() && Instant::now() < end {
+            thread::sleep(Duration::from_millis(5));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -345,31 +364,41 @@ impl Pane {
                     .map(|col| {
                         let cell = &row[Column(col)];
                         let flags = cell.flags;
-                        let (fore, back) =
-                            (color(cell.fg, fg, bg), color(cell.bg, fg, bg));
-                        let text = if flags.intersects(
+                        let c = if flags.intersects(
                             Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER,
                         ) {
-                            String::new()
-                        } else if flags.contains(Flags::HIDDEN) {
-                            " ".to_owned()
+                            '\0'
+                        /* The emulator keeps a tab where it was typed, which printed
+                         * would jump the outer terminal's cursor on */
+                        } else if flags.contains(Flags::HIDDEN) || cell.c.is_control() {
+                            ' '
                         } else {
-                            let mut text = cell.c.to_string();
-                            if let Some(extra) = cell.zerowidth() {
-                                text.extend(extra);
-                            }
-                            text
+                            cell.c
                         };
+                        let mut attributes = Attributes::default();
+                        for (flag, attribute) in [
+                            (Flags::BOLD, Attribute::Bold),
+                            (Flags::DIM, Attribute::Dim),
+                            (Flags::ITALIC, Attribute::Italic),
+                            (Flags::ALL_UNDERLINES, Attribute::Underlined),
+                            (Flags::STRIKEOUT, Attribute::CrossedOut),
+                            (Flags::INVERSE, Attribute::Reverse),
+                        ] {
+                            if flags.intersects(flag) {
+                                attributes.set(attribute);
+                            }
+                        }
                         Cell {
-                            text,
-                            fg: fore,
-                            bg: back,
-                            bold: flags.contains(Flags::BOLD),
-                            dim: flags.contains(Flags::DIM),
-                            italic: flags.contains(Flags::ITALIC),
-                            underline: flags.intersects(Flags::ALL_UNDERLINES),
-                            strike: flags.contains(Flags::STRIKEOUT),
-                            reverse: flags.contains(Flags::INVERSE),
+                            c,
+                            marks: cell
+                                .zerowidth()
+                                .map(<[char]>::to_vec)
+                                .unwrap_or_default(),
+                            style: Style {
+                                fg: color(cell.fg, fg, bg),
+                                bg: color(cell.bg, fg, bg),
+                                attributes,
+                            },
                         }
                     })
                     .collect()
@@ -388,7 +417,12 @@ impl Pane {
     pub fn text(&self) -> Vec<String> {
         self.screen(Color::Reset, Color::Reset)
             .iter()
-            .map(|row| row.iter().map(|c| c.text.as_str()).collect())
+            .map(|row| {
+                row.iter()
+                    .filter(|c| c.c != '\0')
+                    .flat_map(|c| std::iter::once(c.c).chain(c.marks.iter().copied()))
+                    .collect()
+            })
             .collect()
     }
 
@@ -407,13 +441,52 @@ impl Pane {
     }
 }
 
-fn pty_size(cols: u16, rows: u16, pixels: (u16, u16)) -> PtySize {
-    PtySize {
-        rows: rows.max(1),
-        cols: cols.max(1),
-        pixel_width: pixels.0,
-        pixel_height: pixels.1,
+impl Drop for Pane {
+    fn drop(&mut self) {
+        self.kill();
     }
+}
+
+fn winsize(cols: u16, rows: u16, pixels: (u16, u16)) -> libc::winsize {
+    libc::winsize {
+        ws_row: rows.max(1),
+        ws_col: cols.max(1),
+        ws_xpixel: pixels.0,
+        ws_ypixel: pixels.1,
+    }
+}
+
+/* A pseudo-terminal: the terminal's side and the program's, neither of which other
+ * programs viewmer starts inherit */
+fn open_pty(cols: u16, rows: u16, pixels: (u16, u16)) -> io::Result<(OwnedFd, OwnedFd)> {
+    let (mut master, mut slave) = (-1, -1);
+    let mut size = winsize(cols, rows, pixels);
+    let opened = unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut size,
+        )
+    };
+    if opened != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let (master, slave) =
+        unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
+    for fd in [&master, &slave] {
+        unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) };
+    }
+    /* Text in and out is UTF-8, so erasing takes a whole character */
+    unsafe {
+        let mut term: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(slave.as_raw_fd(), &mut term) == 0 {
+            term.c_iflag |= libc::IUTF8;
+            libc::tcsetattr(slave.as_raw_fd(), libc::TCSANOW, &term);
+        }
+    }
+    Ok((master, slave))
 }
 
 /* A color of the program's screen as a terminal color */
@@ -448,7 +521,7 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
-    /* Runs `sh -c script` and waits until `check` holds for the screen, or a second */
+    /* Runs `sh -c script` and waits until `check` holds for the screen, or 5 seconds */
     fn run_until(script: &str, check: impl Fn(&Pane) -> bool) -> Pane {
         let mut pane = Pane::spawn(
             "sh",
@@ -472,23 +545,19 @@ mod tests {
     }
 
     fn row_text(pane: &Pane, row: usize) -> String {
-        pane.screen(Color::Reset, Color::Reset)[row]
-            .iter()
-            .map(|c| c.text.as_str())
-            .collect::<String>()
-            .trim_end()
-            .to_owned()
+        pane.text()[row].trim_end().to_owned()
     }
 
     #[test]
     fn a_programs_output_lands_on_its_screen() {
-        let pane = run_until("printf 'one\\r\\n\\033[31mtwo'; sleep 2", |p| {
-            row_text(p, 1) == "two"
+        let pane = run_until("printf 'one\\r\\n\\033[31mtwo\\ttab'; sleep 2", |p| {
+            row_text(p, 1).ends_with("tab")
         });
         assert_eq!(row_text(&pane, 0), "one");
-        assert_eq!(row_text(&pane, 1), "two");
+        /* A tab is spaces on screen */
+        assert_eq!(row_text(&pane, 1), "two     tab");
         let red = &pane.screen(Color::Reset, Color::Reset)[1][0];
-        assert_eq!(red.fg, Color::AnsiValue(1));
+        assert_eq!(red.style.fg, Color::AnsiValue(1));
     }
 
     #[test]
@@ -511,7 +580,7 @@ mod tests {
 
     #[test]
     fn the_pane_knows_when_its_program_ends() {
-        let mut pane = run_until("exit 0", |_| false);
+        let mut pane = run_until("exit 0", |_| true);
         let end = Instant::now() + Duration::from_secs(5);
         while !pane.exited() && Instant::now() < end {
             thread::sleep(Duration::from_millis(10));

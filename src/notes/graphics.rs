@@ -17,6 +17,9 @@ pub enum Piece {
 
 const START: &[u8] = b"\x1b_G";
 const END: &[u8] = b"\x1b\\";
+/* Longer than kitty takes in one command (it wants pieces of 4096 bytes): a command
+ * that never ends is given up, as text, rather than kept growing */
+const LONGEST: usize = 1 << 20;
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
@@ -50,6 +53,9 @@ impl Splitter {
                 pieces.push(Piece::Text(self.pending.drain(..start).collect()));
             }
             let Some(len) = find(&self.pending[START.len()..], END) else {
+                if self.pending.len() > LONGEST {
+                    pieces.push(Piece::Text(std::mem::take(&mut self.pending)));
+                }
                 return pieces;
             };
             let body = &self.pending[START.len()..START.len() + len];
@@ -141,6 +147,8 @@ impl Translator {
         }
 
         let makes = matches!(action, "t" | "T" | "f");
+        /* Deleting an image and its data frees its number */
+        let frees = action == "d" && matches!(get("d"), Some("I" | "N"));
         let mut out_keys: Vec<String> = Vec::new();
         for (key, value) in &keys {
             match *key {
@@ -169,6 +177,13 @@ impl Translator {
                     out_keys.push(format!("d={},x={},y={}", range, FIRST_ID, LAST_ID));
                 }
                 _ => out_keys.push(format!("{}={}", key, value)),
+            }
+        }
+        if frees {
+            for (key, map) in [("i", &mut self.ids), ("I", &mut self.numbers)] {
+                if let Some(id) = get(key).and_then(|v| v.parse::<u32>().ok()) {
+                    map.remove(&id);
+                }
             }
         }
         out_keys.push("q=2".to_owned());
@@ -217,6 +232,11 @@ mod tests {
             vec![Piece::Command("i=1;AAAA".to_owned()), text("cd")]
         );
         assert_eq!(s.split(b"[0m"), vec![text("\x1b[0m")]);
+        /* A command that never ends doesn't hold up the text for good */
+        let mut s = Splitter::default();
+        assert!(s.split(b"\x1b_Gi=1;").is_empty());
+        let pieces = s.split(&vec![b'A'; LONGEST]);
+        assert!(matches!(&pieces[..], [Piece::Text(t)] if t.len() > LONGEST));
         /* Other escape sequences pass as text */
         assert_eq!(
             s.split(b"\x1b_Xother\x1b\\"),
@@ -248,6 +268,9 @@ mod tests {
         );
         /* An image kitty never got is not deleted in its place */
         assert!(t.command("a=d,d=i,i=99", (0, 0)).0.is_empty());
+        /* Freed, its number goes */
+        assert!(!t.command("a=d,d=I,i=7", (0, 0)).0.is_empty());
+        assert!(t.ids.is_empty());
     }
 
     #[test]

@@ -316,15 +316,6 @@ const fn spec(
     }
 }
 
-/* Colors earlier versions had, which a theme file may still list */
-const RETIRED: [&str; 5] = [
-    "notes.border",
-    "notes.border_inactive",
-    "notes.title",
-    "notes.muted",
-    "notes.selected",
-];
-
 pub const SPECS: [Spec; 41] = [
     spec(
         Slot::FrameBorder,
@@ -723,9 +714,7 @@ impl Theme {
                 let Some(spec) =
                     SPECS.iter().find(|s| s.section == section && s.key == key)
                 else {
-                    if !RETIRED.contains(&name.as_str()) {
-                        problems.push(format!("{}: no such color", name));
-                    }
+                    problems.push(format!("{}: no such color", name));
                     continue;
                 };
                 let paint = match value {
@@ -864,7 +853,5 @@ mod tests {
             "frame.title: only backgrounds and page colors can be see-through"
         ));
         assert!(said("contents.foo: no such color"));
-        let (_, old) = Theme::parse("[notes]\nborder = \"red\"\n");
-        assert!(old.is_empty(), "a retired color is no mistake: {:?}", old);
     }
 }

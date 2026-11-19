@@ -113,7 +113,7 @@ impl Notes {
         let cwd = if folder.is_dir() {
             folder
         } else {
-            dirs::home_dir().unwrap_or_default()
+            std::env::home_dir().unwrap_or_default()
         };
         let mut env = vec![("VIEWMER_PDF".to_owned(), self.pdf.display().to_string())];
         let mut args = Vec::new();
@@ -160,11 +160,11 @@ impl Notes {
         send_to_kitty(&graphics::clear(true));
     }
 
-    /* Passes the images the terminal's programs drew on to kitty */
+    /* Passes the images the terminal's programs drew on to kitty, while it's shown */
     pub fn pass_graphics(&mut self) {
         if let Some(terminal) = &mut self.terminal {
             let out = terminal.take_graphics();
-            if !out.is_empty() {
+            if self.open && !out.is_empty() {
                 send_to_kitty(&out);
             }
         }
@@ -250,7 +250,7 @@ fn write_helpers() -> Option<PathBuf> {
     /* helix itself, past this folder in the PATH */
     if note::is_helix(&editor) {
         if let Some(real) = find_program(&editor, &bin) {
-            let user = dirs::home_dir()?.join(".config/helix/config.toml");
+            let user = std::env::home_dir()?.join(".config/helix/config.toml");
             let config = dir.join("helix.toml");
             std::fs::write(
                 &config,

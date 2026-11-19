@@ -576,7 +576,7 @@ pub fn handle_pointer(
                     viewer.jump_dest(destination);
                 }
             } else {
-                let _ = open::that_detached(link.uri);
+                open_link(&link.uri);
             }
 
             set_pointer(app, PointerShape::Default);
@@ -794,5 +794,29 @@ fn go_to_tag(page: &str, viewer: &mut Viewer, app: &mut App) {
             app.message = Some(format!("Page {}", page));
         }
         None => app.message = Some(format!("No page {} in this PDF", page)),
+    }
+}
+
+/* Opens a web or mail link with the system's opener; other kinds, such as `file:` or
+ * an app's own scheme, could run programs, so they stay shut */
+fn open_link(uri: &str) {
+    let scheme = uri.split(':').next().unwrap_or("").to_ascii_lowercase();
+    if !matches!(scheme.as_str(), "http" | "https" | "mailto") {
+        return;
+    }
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    let child = std::process::Command::new(opener)
+        .arg(uri)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    /* Waited for out of the way, so it leaves no zombie */
+    if let Ok(mut child) = child {
+        std::thread::spawn(move || child.wait());
     }
 }

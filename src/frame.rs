@@ -15,7 +15,7 @@ use crate::app::*;
 use crate::config::*;
 use crate::drivers;
 use crate::drivers::commands::{ClearImages, PointerShape, SetPointerShape};
-use crate::drivers::graphics::{self, GraphicsResponse};
+use crate::drivers::graphics;
 use crate::image::*;
 use crate::outline::{breadcrumb, current_section};
 use crate::state::*;
@@ -373,7 +373,7 @@ pub fn set_pointer(app: &mut App, shape: PointerShape) {
  * when kitty no longer has it. Never waits on the terminal for good: a missing answer
  * must not freeze the viewer. */
 pub fn check_placements(
-    answers: &Receiver<GraphicsResponse>,
+    answers: &Receiver<String>,
     displayed: Vec<usize>,
     viewer: &mut Viewer,
     app: &mut App,
@@ -382,7 +382,7 @@ pub fn check_placements(
         let Ok(res) = answers.recv_timeout(RESPONSE_TIMEOUT) else {
             break;
         };
-        if res.payload().contains("OK") {
+        if res.contains("OK") {
             viewer.placement_ok(page);
             continue;
         }
@@ -390,11 +390,7 @@ pub fn check_placements(
         /* Place everything again next frame, once the page is sent again */
         app.shown = None;
         if !viewer.render_again(page) {
-            app.message = Some(format!(
-                "kitty rejects page {}: {}",
-                page + 1,
-                res.payload()
-            ));
+            app.message = Some(format!("kitty rejects page {}: {}", page + 1, res));
         }
     }
 }

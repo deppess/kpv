@@ -11,9 +11,9 @@ use std::{
 
 /* `~` at the start of a path stands for the home folder */
 pub fn expand_home(path: &str) -> PathBuf {
-    match (path.strip_prefix("~/"), dirs::home_dir()) {
+    match (path.strip_prefix("~/"), std::env::home_dir()) {
         (Some(rest), Some(home)) => home.join(rest),
-        _ if path == "~" => dirs::home_dir().unwrap_or_default(),
+        _ if path == "~" => std::env::home_dir().unwrap_or_default(),
         _ => PathBuf::from(path),
     }
 }
@@ -181,34 +181,23 @@ pub fn move_link(text: &str, old: &Path, new: &Path) -> Option<String> {
 /* helix's config for the helix in the panel only: it saves when focus leaves the panel,
  * and a second after typing stops, so a crash or a killed viewer loses next to nothing */
 pub fn helix_config(user: Option<&str>) -> String {
-    let mut doc = user
-        .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
-        .unwrap_or_default();
-    if !doc.get("editor").is_some_and(|e| e.is_table()) {
-        doc.insert("editor", toml_edit::table());
-    }
-    let editor = doc["editor"].as_table_mut().expect("just made a table");
-    let mut auto_save = match editor.remove("auto-save") {
-        Some(toml_edit::Item::Table(table)) => table,
-        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(inline))) => {
-            inline.into_table()
+    use toml::{Table, Value};
+    /* The table at `key`, made in place of anything else there (`auto-save = true`) */
+    fn table<'a>(parent: &'a mut Table, key: &str) -> &'a mut Table {
+        if !parent.get(key).is_some_and(Value::is_table) {
+            parent.insert(key.to_owned(), Value::Table(Table::new()));
         }
-        _ => toml_edit::Table::new(),
-    };
-    auto_save.insert("focus-lost", toml_edit::value(true));
-    let mut delay = match auto_save.remove("after-delay") {
-        Some(toml_edit::Item::Table(table)) => table,
-        Some(toml_edit::Item::Value(toml_edit::Value::InlineTable(inline))) => {
-            inline.into_table()
-        }
-        _ => toml_edit::Table::new(),
-    };
-    delay.insert("enable", toml_edit::value(true));
-    if !delay.contains_key("timeout") {
-        delay.insert("timeout", toml_edit::value(1000));
+        parent
+            .get_mut(key)
+            .and_then(Value::as_table_mut)
+            .expect("just made")
     }
-    auto_save.insert("after-delay", toml_edit::Item::Table(delay));
-    editor.insert("auto-save", toml_edit::Item::Table(auto_save));
+    let mut doc: Table = user.and_then(|text| text.parse().ok()).unwrap_or_default();
+    let auto_save = table(table(&mut doc, "editor"), "auto-save");
+    auto_save.insert("focus-lost".to_owned(), Value::Boolean(true));
+    let delay = table(auto_save, "after-delay");
+    delay.insert("enable".to_owned(), Value::Boolean(true));
+    delay.entry("timeout").or_insert(Value::Integer(1000));
     doc.to_string()
 }
 

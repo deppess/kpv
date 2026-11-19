@@ -15,6 +15,16 @@ impl Command for ClearImages {
     }
 }
 
+/* Frees every image viewmer gave kitty, placed or kept for later, so that kitty gets
+ * its memory back when viewmer leaves */
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FreeImages;
+impl Command for FreeImages {
+    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
+        f.write_str("\x1B_Gq=2,a=d,d=A\x1B\\\x1B_Gq=2,a=d,d=R,x=1,y=4294967295\x1B\\")
+    }
+}
+
 /* A small hack to get cursor position in pixels
  * Replacing ?1006 with ?1016h reports cursor position in pixels instead of cells */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,19 +56,19 @@ impl Command for DisableMouseCapturePixels {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(usize)]
-#[allow(dead_code)]
 pub enum PointerShape {
     Default,
     Pointer,
-    Text,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SetPointerShape(pub PointerShape);
 impl Command for SetPointerShape {
     fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        const LOOKUP: [&str; 3] = ["", "pointer", "text"];
-        write!(f, "\x1B]22;{}\x1B\\", LOOKUP[self.0 as usize])
+        let name = match self.0 {
+            PointerShape::Default => "",
+            PointerShape::Pointer => "pointer",
+        };
+        write!(f, "\x1B]22;{}\x1B\\", name)
     }
 }

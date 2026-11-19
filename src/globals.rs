@@ -1,4 +1,4 @@
-use crate::{config::Config, drivers::graphics::GraphicsResponse};
+use crate::config::Config;
 use crossbeam_channel::Receiver;
 use crossterm::terminal::WindowSize;
 use std::sync::{
@@ -16,10 +16,11 @@ Global options:
 -v, --version       Print the current version.
 "#;
 
-pub const VERSION: &str = "0.1.0";
-pub const RELEASED: &str = "2026-11-08";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const CONFIG_FILENAME: &str = "viewmer";
 pub const DEFAULT_CONFIG: &str = r#"# viewmer settings. Colors are in theme.toml next to this file.
+# These are the defaults: a setting or key left out keeps its default, so this file
+# only needs what you change.
 
 [viewer]
 # How far one step of j, k, the arrows or the mouse wheel moves
@@ -58,7 +59,8 @@ width = 45
 [layers]
 "Ctrl+Space" = "Notes"
 
-# Keys, as "key" = "Action". The actions are listed in the README.
+# Keys, as "key" = "Action", added to the defaults; "key" = "" unbinds a default.
+# The actions are listed in the README.
 [bindings]
 "Ctrl+a" = "ToggleAlpha"
 "Ctrl+r" = "ToggleInverse"
@@ -113,7 +115,8 @@ width = 45
 
 /* Hate on me for those global singletons as much as you want. */
 pub static CONFIG: OnceLock<Config> = OnceLock::new();
-pub static RECEIVER_GR: OnceLock<Mutex<Receiver<GraphicsResponse>>> = OnceLock::new();
+/* What kitty answers to image commands: the text after `;`, such as `OK` */
+pub static RECEIVER_GR: OnceLock<Mutex<Receiver<String>>> = OnceLock::new();
 pub static TERMINAL_SIZE: OnceLock<RwLock<WindowSize>> = OnceLock::new();
 /* The scale pages are wanted at now, as f32 bits: the renderer skips requests for
  * another, which a newer zoom has replaced */

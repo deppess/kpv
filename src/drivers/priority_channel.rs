@@ -1,5 +1,8 @@
+/* Channels by priority, read first to last: the renderer's results, where pages come
+ * after everything else and go when a reload makes them stale */
+
 use crossbeam_channel::{
-    unbounded, Receiver, RecvError, Select, SendError, Sender, TryRecvError, TrySendError,
+    unbounded, Receiver, Select, Sender, TryRecvError, TrySendError,
 };
 
 use crate::clear_channel;
@@ -10,12 +13,6 @@ pub struct PrioritySender<T, const U: usize> {
 }
 
 impl<T, const U: usize> PrioritySender<T, U> {
-    #[allow(dead_code)]
-    pub fn send_priority(&self, obj: T, priority: usize) -> Result<(), SendError<T>> {
-        self.senders[priority].send(obj)
-    }
-
-    #[allow(dead_code)]
     pub fn try_send_priority(
         &self,
         obj: T,
@@ -31,17 +28,6 @@ pub struct PriorityReceiver<T, const U: usize> {
 }
 
 impl<T, const U: usize> PriorityReceiver<T, U> {
-    #[allow(dead_code)]
-    pub fn construct_select<'a>(&'a self) -> Select<'a> {
-        let mut sel = Select::new();
-        for i in 0..U {
-            sel.recv(&self.receivers[i]);
-        }
-
-        sel
-    }
-
-    #[allow(dead_code)]
     pub fn construct_biased_select<'a>(&'a self) -> Select<'a> {
         let mut sel = Select::new_biased();
         for i in 0..U {
@@ -51,12 +37,6 @@ impl<T, const U: usize> PriorityReceiver<T, U> {
         sel
     }
 
-    #[allow(dead_code)]
-    pub fn recv_priority(&self, priority: usize) -> Result<T, RecvError> {
-        self.receivers[priority].recv()
-    }
-
-    #[allow(dead_code)]
     pub fn try_recv_priority(&self, priority: usize) -> Result<T, TryRecvError> {
         self.receivers[priority].try_recv()
     }
@@ -65,7 +45,6 @@ impl<T, const U: usize> PriorityReceiver<T, U> {
         self.receivers.iter().all(Receiver::is_empty)
     }
 
-    #[allow(dead_code)]
     pub fn clear_priority(&self, priority: usize) {
         clear_channel!(self.receivers[priority]);
     }

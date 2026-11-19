@@ -28,10 +28,9 @@ pub struct FileState {
     /* Printed page 1 is this many pages into the file; for scans without labels */
     #[serde(default)]
     pub page_offset: i32,
-    /* The offset was set with `:offset` rather than read off the pages; `None` in
-     * files from before the pages were read, when only `:offset` set it */
+    /* The offset was set with `:offset` rather than read off the pages */
     #[serde(default)]
-    pub offset_by_hand: Option<bool>,
+    pub offset_by_hand: bool,
     /* Seconds since 1970 */
     #[serde(default)]
     pub opened: u64,
@@ -94,17 +93,13 @@ impl Store {
     }
 
     /* `~/.local/state/viewmer` on every system, or under $XDG_STATE_HOME when that's
-     * set. Files from where earlier versions kept them move over. */
+     * set */
     pub fn default_dir() -> Option<PathBuf> {
         let base = match std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty()) {
             Some(base) => PathBuf::from(base),
-            None => dirs::home_dir()?.join(".local").join("state"),
+            None => std::env::home_dir()?.join(".local").join("state"),
         };
-        let dir = base.join(CONFIG_FILENAME);
-        for old in [dirs::state_dir(), dirs::data_dir()].into_iter().flatten() {
-            move_old_files(&old.join(CONFIG_FILENAME), &dir);
-        }
-        Some(dir)
+        Some(base.join(CONFIG_FILENAME))
     }
 
     /* Where the file is now */
@@ -217,32 +212,6 @@ pub fn document_id(document: &Document) -> Option<String> {
     let first = id.get_array(0).ok()??;
     let bytes = first.as_bytes().ok()?;
     (!bytes.is_empty()).then(|| bytes.iter().map(|b| format!("{:02x}", b)).collect())
-}
-
-/* Earlier versions kept the state files in `<old>/state`: Application Support on
- * macOS, ~/.local/state/viewmer/state on Linux. They move to `dir` (a file already
- * there wins), and the old folders go once they're empty. */
-fn move_old_files(old: &Path, dir: &Path) {
-    let from = old.join("state");
-    if from == dir || !from.is_dir() {
-        return;
-    }
-    let Ok(entries) = fs::read_dir(&from) else {
-        return;
-    };
-    if fs::create_dir_all(dir).is_err() {
-        return;
-    }
-    for entry in entries.flatten() {
-        let to = dir.join(entry.file_name());
-        if !to.exists() {
-            let _ = fs::rename(entry.path(), to);
-        }
-    }
-    let _ = fs::remove_dir(&from);
-    if old != dir {
-        let _ = fs::remove_dir(old);
-    }
 }
 
 #[cfg(test)]
@@ -392,46 +361,6 @@ mod tests {
         bytes = text.into_bytes();
         let document = Document::from_bytes(&bytes, "application/pdf").unwrap();
         assert_eq!(document_id(&document), Some("00ff10".to_owned()));
-    }
-
-    #[test]
-    fn old_state_files_move_and_the_old_folders_go() {
-        let root =
-            std::env::temp_dir().join(format!("viewmer-state-{}", std::process::id()));
-        let old = root.join("Application Support").join("viewmer");
-        let new = root.join(".local").join("state").join("viewmer");
-        fs::create_dir_all(old.join("state")).unwrap();
-        fs::create_dir_all(&new).unwrap();
-        fs::write(old.join("state").join("id-1.toml"), "old").unwrap();
-        fs::write(old.join("state").join("id-2.toml"), "old").unwrap();
-        fs::write(new.join("id-2.toml"), "new").unwrap();
-
-        move_old_files(&old, &new);
-        assert_eq!(fs::read_to_string(new.join("id-1.toml")).unwrap(), "old");
-        assert_eq!(fs::read_to_string(new.join("id-2.toml")).unwrap(), "new");
-        assert!(
-            old.join("state").join("id-2.toml").exists(),
-            "a newer file wins"
-        );
-
-        fs::remove_file(old.join("state").join("id-2.toml")).unwrap();
-        move_old_files(&old, &new);
-        assert!(!old.exists(), "the emptied old folder goes");
-        fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
-    fn state_files_one_level_down_move_up() {
-        /* Linux: ~/.local/state/viewmer/state into ~/.local/state/viewmer */
-        let root =
-            std::env::temp_dir().join(format!("viewmer-up-{}", std::process::id()));
-        let dir = root.join("viewmer");
-        fs::create_dir_all(dir.join("state")).unwrap();
-        fs::write(dir.join("state").join("id-1.toml"), "x").unwrap();
-        move_old_files(&dir, &dir);
-        assert!(dir.join("id-1.toml").exists());
-        assert!(!dir.join("state").exists());
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

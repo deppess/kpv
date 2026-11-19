@@ -416,22 +416,16 @@ fn quad_bounds(quad: &Quad) -> mupdf::Rect {
 pub struct Renderer {
     thread_render: Option<JoinHandle<Result<(), String>>>,
 
-    priority_client_sender: PrioritySender<RendererAction, 2>,
-    priority_server_receiver: PriorityReceiver<RendererAction, 2>,
-
-    general_client_receiver: Receiver<RendererAction>,
-    general_server_sender: Sender<RendererAction>,
+    /* What the viewer asks for, in order */
+    actions: Sender<RendererAction>,
+    inbox: Receiver<RendererAction>,
 
     result_server_sender: PrioritySender<RendererResult, 2>,
 }
 
 impl Renderer {
     pub fn new() -> (Self, PriorityReceiver<RendererResult, 2>) {
-        let (priority_client_sender, priority_server_receiver) =
-            unbounded_priority::<RendererAction, 2>();
-
-        let (general_server_sender, general_client_receiver) =
-            unbounded::<RendererAction>();
+        let (actions, inbox) = unbounded::<RendererAction>();
 
         let (result_server_sender, result_client_receiver) =
             unbounded_priority::<RendererResult, 2>();
@@ -440,11 +434,8 @@ impl Renderer {
             Self {
                 thread_render: None,
 
-                priority_client_sender,
-                priority_server_receiver,
-
-                general_client_receiver,
-                general_server_sender,
+                actions,
+                inbox,
 
                 result_server_sender,
             },
@@ -454,44 +445,25 @@ impl Renderer {
 
     pub fn run(&mut self, file_input: &str) -> Result<(), String> {
         let file_string = file_input.to_owned();
-        let priority_server_receiver = self.priority_server_receiver.clone();
-        let general_server_sender = self.general_server_sender.clone();
+        let inbox = self.inbox.clone();
         let result_server_sender = self.result_server_sender.clone();
 
         let thread_render = thread::spawn(move || {
-            let priority_server_receiver = priority_server_receiver;
-            let general_server_sender = general_server_sender;
             let result_server_sender = result_server_sender;
 
             let mut state = RendererInnerState::new(file_string)?;
 
-            let mut sel = priority_server_receiver.construct_biased_select();
-
             while RUNNING.load(Ordering::Acquire) {
-                let action = priority_server_receiver
-                    .recv_priority(sel.ready())
+                let action = inbox
+                    .recv()
                     .map_err(|x| format!("Could not receive from client: {}", x))?;
 
                 match action {
-                    RendererAction::Display(..) => (),
-                    _ => {
-                        general_server_sender
-                            .try_send(action.clone())
-                            .map_err(|x| {
-                                format!("Could not send action to client: {}", x)
-                            })?;
-                    }
-                }
-
-                match action {
                     RendererAction::Load => {
-                        priority_server_receiver.clear_priority(0);
+                        /* What was asked of the old version goes */
+                        while inbox.try_recv().is_ok() {}
                         /* A failed reload keeps showing the last good version */
                         let Ok(result) = state.load() else { continue };
-
-                        // Clear the scheduled pages for rendering
-                        priority_server_receiver.clear_priority(1);
-
                         result_server_sender.try_send_priority(result, 0).map_err(
                             |x| format!("Could not send results to client: {}", x),
                         )?;
@@ -503,23 +475,15 @@ impl Renderer {
                     }
                     RendererAction::ToggleAlpha => {
                         state.alpha = !state.alpha;
-
-                        // Clear the scheduled pages for rendering
-                        priority_server_receiver.clear_priority(1);
                     }
                     RendererAction::ToggleInverse => {
                         state.inverse = !state.inverse;
-
-                        // Clear the scheduled pages for rendering
-                        priority_server_receiver.clear_priority(1);
                     }
                     RendererAction::Search(needle) => {
                         state.start_search(needle, result_server_sender.clone());
-                        priority_server_receiver.clear_priority(1);
                     }
                     RendererAction::SetCurrentMatch(current) => {
                         state.current_hit = current;
-                        priority_server_receiver.clear_priority(1);
                     }
                     RendererAction::ReadNumbers => {
                         read_printed_numbers(
@@ -531,7 +495,6 @@ impl Renderer {
                         state.search_generation.fetch_add(1, Ordering::AcqRel);
                         state.hits.lock().unwrap().clear();
                         state.current_hit = None;
-                        priority_server_receiver.clear_priority(1);
                     }
                     RendererAction::Display(request) => {
                         let page = request.page;
@@ -608,38 +571,10 @@ impl Renderer {
         Ok(())
     }
 
+    /* Queues an action for the renderer, which takes them in order */
     pub fn send_action(&self, action: RendererAction) -> Result<(), String> {
-        match action {
-            RendererAction::Display(..) => self
-                .priority_client_sender
-                .try_send_priority(action, 0)
-                .map_err(|x| format!("Could not send action to renderer: {}", x))?,
-            _ => Err("Only Display can be sent without confirmation".to_string())?,
-        }
-
-        Ok(())
-    }
-
-    pub fn send_and_confirm_action(&self, action: RendererAction) -> Result<(), String> {
-        /* Sends an action to the renderer thread and waits until the thread confirms
-         * that the action has been accepted and scheduled */
-        match action {
-            RendererAction::Display(..) => Err("Cannot wait for display".to_string())?,
-            _ => self
-                .priority_client_sender
-                .try_send_priority(action.clone(), 0)
-                .map_err(|x| format!("Could not send action to renderer: {}", x))?,
-        }
-
-        let result = self
-            .general_client_receiver
-            .recv()
-            .map_err(|x| format!("Could not receive action from renderer: {}", x))?;
-
-        if result != action {
-            return Err("Sent and received action from renderer don't match!".to_owned());
-        }
-
-        Ok(())
+        self.actions
+            .send(action)
+            .map_err(|_| "The renderer stopped".to_owned())
     }
 }

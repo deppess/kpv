@@ -218,7 +218,7 @@ pub fn changes(old: Option<&Shown>, new: &Shown) -> Changes {
 
 /* Sends `action` to the renderer; a renderer that stopped ends the viewer */
 pub fn tell_renderer(renderer: &Renderer, app: &mut App, action: RendererAction) {
-    if let Err(e) = renderer.send_and_confirm_action(action) {
+    if let Err(e) = renderer.send_action(action) {
         app.fatal.get_or_insert(e);
     }
 }
@@ -244,7 +244,7 @@ pub fn open_store(file: &str, id: Option<String>, viewer: &mut Viewer, app: &mut
     let mut store = Store::new(dir, id, Path::new(file));
     if let Some(state) = store.load() {
         let _ = viewer.set_page_offset(state.page_offset);
-        app.offset_by_hand = state.offset_by_hand.unwrap_or(state.page_offset != 0);
+        app.offset_by_hand = state.offset_by_hand;
         viewer.restore(state.page, state.within, state.zoom);
         app.marks = state
             .marks
@@ -316,7 +316,7 @@ pub fn file_state(viewer: &Viewer, app: &App) -> FileState {
         within,
         zoom,
         page_offset: viewer.page_offset(),
-        offset_by_hand: Some(app.offset_by_hand),
+        offset_by_hand: app.offset_by_hand,
         marks: app.marks.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
         note: app
             .notes

@@ -46,7 +46,7 @@ use keybinds::{Keybinds, Mods};
 use crate::app::*;
 use crate::config::*;
 use crate::drivers::commands::{
-    DisableMouseCapturePixels, EnableMouseCapturePixels, PointerShape,
+    DisableMouseCapturePixels, EnableMouseCapturePixels, FreeImages, PointerShape,
 };
 use crate::drivers::graphics::terminal_graphics_test_support;
 use crate::frame::*;
@@ -77,7 +77,7 @@ fn main() {
             return;
         }
         "-v" | "--version" => {
-            println!("viewmer v{} ({})", VERSION, RELEASED);
+            println!("viewmer {}", VERSION);
             return;
         }
         _ => (),
@@ -200,7 +200,7 @@ fn main() {
     let (mut renderer, result_receiver) = threads::renderer::Renderer::new();
     renderer
         .run(&arg)
-        .and_then(|_| renderer.send_and_confirm_action(RendererAction::Load))
+        .and_then(|_| renderer.send_action(RendererAction::Load))
         .unwrap_or_else(|e| fail(&e));
 
     /* ========================= Thread notifying file change ======================== */
@@ -510,6 +510,7 @@ fn reset_screen() {
         DisableBracketedPaste,
         DisableFocusChange,
         DisableMouseCapturePixels,
+        FreeImages,
         LeaveAlternateScreen,
         SetCursorStyle::DefaultUserShape,
         Show

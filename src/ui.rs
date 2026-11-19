@@ -6,8 +6,8 @@ use crossterm::{
     cursor::MoveTo,
     queue,
     style::{
-        Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor,
-        SetForegroundColor,
+        Attribute, Color, Print, ResetColor, SetAttribute, SetAttributes,
+        SetBackgroundColor, SetForegroundColor,
     },
 };
 
@@ -632,57 +632,29 @@ pub fn draw_notes(rect: (u16, u16, u16, u16), screen: &[Vec<Cell>]) -> io::Resul
 
 /* One row of the editor's screen, `width` cells */
 fn draw_cells(out: &mut io::Stdout, cells: &[Cell], width: usize) -> io::Result<()> {
-    let mut last: Option<&Cell> = None;
+    let mut last = None;
     /* A wide character's second half has its own cell, so cells are columns */
     let drawn = cells.len().min(width);
-    for cell in cells.iter().take(width) {
-        if cell.text.is_empty() {
+    for cell in &cells[..drawn] {
+        if cell.c == '\0' {
             /* The second half of a wide character, drawn with the first */
             continue;
         }
-        let same = last.is_some_and(|l| {
-            (
-                l.fg,
-                l.bg,
-                l.bold,
-                l.dim,
-                l.italic,
-                l.underline,
-                l.strike,
-                l.reverse,
-            ) == (
-                cell.fg,
-                cell.bg,
-                cell.bold,
-                cell.dim,
-                cell.italic,
-                cell.underline,
-                cell.strike,
-                cell.reverse,
-            )
-        });
-        if !same {
+        if last != Some(cell.style) {
+            let style = cell.style;
             queue!(
                 out,
                 SetAttribute(Attribute::Reset),
-                SetForegroundColor(cell.fg),
-                SetBackgroundColor(cell.bg),
+                SetForegroundColor(style.fg),
+                SetBackgroundColor(style.bg),
+                SetAttributes(style.attributes),
             )?;
-            for (on, attribute) in [
-                (cell.bold, Attribute::Bold),
-                (cell.dim, Attribute::Dim),
-                (cell.italic, Attribute::Italic),
-                (cell.underline, Attribute::Underlined),
-                (cell.strike, Attribute::CrossedOut),
-                (cell.reverse, Attribute::Reverse),
-            ] {
-                if on {
-                    queue!(out, SetAttribute(attribute))?;
-                }
-            }
+            last = Some(style);
         }
-        queue!(out, Print(&cell.text))?;
-        last = Some(cell);
+        queue!(out, Print(cell.c))?;
+        for mark in &cell.marks {
+            queue!(out, Print(mark))?;
+        }
     }
     queue!(out, SetAttribute(Attribute::Reset))?;
     if drawn < width {

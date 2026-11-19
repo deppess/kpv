@@ -3,7 +3,7 @@ use std::{sync::atomic::Ordering, thread};
 use crossbeam_channel::{unbounded, Receiver};
 use crossterm::event::{read, Event, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
-use crate::{drivers::graphics::GraphicsResponse, globals::RUNNING};
+use crate::globals::RUNNING;
 
 pub enum InputEvent {
     Key(KeyEvent),
@@ -17,14 +17,14 @@ pub enum InputEvent {
 pub struct EventThreadData(
     pub Receiver<InputEvent>,
     pub Receiver<MouseEvent>,
-    pub Receiver<GraphicsResponse>,
+    pub Receiver<String>,
     pub Receiver<(u16, u16)>,
 );
 
 pub fn spawn() -> EventThreadData {
     let (sender_input, receive_input) = unbounded::<InputEvent>();
     let (sender_mouse, receive_mouse) = unbounded::<MouseEvent>();
-    let (sender_gr, receive_gr) = unbounded::<GraphicsResponse>();
+    let (sender_gr, receive_gr) = unbounded::<String>();
     let (sender_ws, receive_ws) = unbounded::<(u16, u16)>();
 
     /* Stops when the terminal can't be read any more or the main loop is gone; the
@@ -35,7 +35,8 @@ pub fn spawn() -> EventThreadData {
             let sent = match event {
                 Event::Key(event) => sender_input.send(InputEvent::Key(event)).is_ok(),
                 Event::ApplicationProgramCommand(command) => {
-                    sender_gr.send(GraphicsResponse::new(&command)).is_ok()
+                    let answer = command.split_once(';').map_or("", |(_, a)| a);
+                    sender_gr.send(answer.to_owned()).is_ok()
                 }
                 Event::Mouse(
                     event @ MouseEvent {
