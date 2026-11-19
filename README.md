@@ -89,7 +89,7 @@ The mouse wheel scrolls the panel. Clicking an entry goes there, and clicking it
 
 ## Notes
 
-`Ctrl-h` opens a terminal beside the PDF, in a panel on the left, and the pages move over to the right. It runs your shell, the one you log in with, starting in the notes folder, and anything runs in it as in any terminal: helix, yazi, git. It keeps running while hidden, so it comes back as you left it; `exit` closes the panel.
+`Ctrl-h` opens a terminal beside the PDF, edge to edge down the left of the window, and the PDF moves over to the right in its frame, which is drawn bright while the PDF has the keys. It runs your shell, the one you log in with, starting in the notes folder, and anything runs in it as in any terminal: helix, yazi, git. It keeps running while hidden, so it comes back as you left it; `exit` closes the panel.
 
 `Ctrl-l` goes back to the PDF and `Ctrl-h` to the terminal again; a click on either side does the same. While the terminal has the keys, every key goes to it except `Ctrl-h`, `Ctrl-l`, `Ctrl-=` and `Ctrl--` (the panel wider and narrower) and `Ctrl-Space`, which shows the notes layer: `p` tags the page, `g` goes to a tagged page, `x` hides the panel. The mouse wheel scrolls whichever side it's over. The contents panel opens beside the terminal, at the left of the pages.
 

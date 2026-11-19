@@ -75,14 +75,32 @@ pub fn inner() -> Viewport {
     Viewport::from_size(size.columns, size.rows, size.width, size.height)
 }
 
-/* Where the pages go: inside the border, beside the notes panel when it's open */
-pub fn viewport() -> Viewport {
-    let mut vp = inner();
+/* The whole window, edge to edge */
+pub fn window() -> Viewport {
+    let size = TERMINAL_SIZE.get().unwrap().read().unwrap();
+    let mut vp = Viewport::from_size(size.columns, size.rows, size.width, size.height);
+    (vp.col, vp.row, vp.cols, vp.rows) = (0, 0, size.columns.max(1), size.rows.max(1));
+    vp
+}
+
+/* The PDF's framed part of the window: all of it, or what the notes terminal leaves on
+ * the right. Left, top, width and height in cells, the border included. */
+pub fn frame_rect() -> (u16, u16, u16, u16) {
+    let window = window();
     let notes = NOTES_COLS
         .load(Ordering::Acquire)
-        .min(vp.cols.saturating_sub(1));
-    vp.col += notes;
-    vp.cols -= notes;
+        .min(window.cols.saturating_sub(3));
+    (notes, 0, window.cols - notes, window.rows)
+}
+
+/* Where the pages go: inside the PDF's frame */
+pub fn viewport() -> Viewport {
+    let mut vp = window();
+    let (left, top, width, height) = frame_rect();
+    vp.col = left + 1;
+    vp.row = top + 1;
+    vp.cols = width.saturating_sub(2).max(1);
+    vp.rows = height.saturating_sub(2).max(1);
     vp
 }
 
@@ -102,10 +120,10 @@ pub fn set_notes_percent(percent: u16) {
 
 /* The notes panel on the left of `inner`, `percent` of its width: left, top, width
  * and height in cells, border included */
-pub fn notes_rect(inner: &Viewport, percent: u16) -> (u16, u16, u16, u16) {
-    let width = (inner.cols as u32 * percent.clamp(10, 90) as u32 / 100) as u16;
-    let width = width.max(12).min(inner.cols.saturating_sub(10)).max(3);
-    (inner.col, inner.row, width, inner.rows)
+pub fn notes_rect(window: &Viewport, percent: u16) -> (u16, u16, u16, u16) {
+    let width = (window.cols as u32 * percent.clamp(10, 90) as u32 / 100) as u16;
+    let width = width.max(12).min(window.cols.saturating_sub(12)).max(3);
+    (window.col, window.row, width, window.rows)
 }
 
 /* A 0-indexed cell under a mouse position in pixels */
@@ -175,32 +193,36 @@ pub fn columns(text: &str) -> usize {
     UnicodeWidthStr::width(text)
 }
 
-/* Draws the rounded frame with `title` in the top edge and `segments` in the
- * bottom edge: `╭ title ───╮` … `╰ NOR │ 3/42 │ 110% ───╯` */
-pub fn draw_frame(title: &str, segments: &[Segment]) -> io::Result<()> {
-    let (cols, rows) = {
-        let size = TERMINAL_SIZE.get().unwrap().read().unwrap();
-        (size.columns as usize, size.rows as usize)
-    };
+/* Draws the PDF's rounded frame with `title` in the top edge and `segments` in the
+ * bottom edge: `╭ title ───╮` … `╰ NOR │ 3/42 │ 110% ───╯`. Beside the notes
+ * terminal, it's bright while the PDF has the keys. */
+pub fn draw_frame(title: &str, segments: &[Segment], active: bool) -> io::Result<()> {
+    let (left, top, width, height) = frame_rect();
+    let (cols, rows) = (width as usize, height as usize);
     if cols < 4 || rows < 3 {
         return Ok(());
     }
     let inner = cols - 2;
     let mut out = io::stdout();
+    let border = color(if active {
+        Slot::FrameBorderActive
+    } else {
+        Slot::FrameBorder
+    });
 
     /* Top edge with the title */
     let title = truncate(title, inner.saturating_sub(2));
     let title_len = columns(&title) + 2;
     queue!(
         out,
-        MoveTo(0, 0),
-        SetForegroundColor(color(Slot::FrameBorder)),
+        MoveTo(left, top),
+        SetForegroundColor(border),
         Print("╭"),
         SetForegroundColor(color(Slot::FrameTitle)),
         SetAttribute(Attribute::Bold),
         Print(format!(" {} ", title)),
         SetAttribute(Attribute::Reset),
-        SetForegroundColor(color(Slot::FrameBorder)),
+        SetForegroundColor(border),
         Print("─".repeat(inner.saturating_sub(title_len))),
         Print("╮"),
     )?;
@@ -209,15 +231,15 @@ pub fn draw_frame(title: &str, segments: &[Segment]) -> io::Result<()> {
     for row in 1..rows - 1 {
         queue!(
             out,
-            MoveTo(0, row as u16),
+            MoveTo(left, top + row as u16),
             Print("│"),
-            MoveTo(cols as u16 - 1, row as u16),
+            MoveTo(left + cols as u16 - 1, top + row as u16),
             Print("│"),
         )?;
     }
 
     /* Bottom edge with the status segments */
-    queue!(out, MoveTo(0, rows as u16 - 1), Print("╰ "))?;
+    queue!(out, MoveTo(left, top + rows as u16 - 1), Print("╰ "))?;
     let mut used = 1;
     for (i, segment) in segments.iter().enumerate() {
         let sep = if i == 0 { "" } else { " │ " };
@@ -237,7 +259,7 @@ pub fn draw_frame(title: &str, segments: &[Segment]) -> io::Result<()> {
     }
     queue!(
         out,
-        SetForegroundColor(color(Slot::FrameBorder)),
+        SetForegroundColor(border),
         Print(" "),
         Print("─".repeat(inner.saturating_sub(used + 1))),
         Print("╯"),
@@ -589,73 +611,23 @@ fn draw_toc_row(out: &mut io::Stdout, row: &TocRow, inner: usize) -> io::Result<
     )
 }
 
-/* Draws the notes panel at `rect` with `title` in its top edge; its border is bright
- * while it has the keys */
-pub fn draw_notes(
-    rect: (u16, u16, u16, u16),
-    title: &str,
-    focused: bool,
-    screen: &[Vec<Cell>],
-) -> io::Result<()> {
+/* Draws the notes terminal's screen at `rect`, edge to edge */
+pub fn draw_notes(rect: (u16, u16, u16, u16), screen: &[Vec<Cell>]) -> io::Result<()> {
     let (left, top, width, height) = rect;
-    if width < 4 || height < 3 {
-        return Ok(());
-    }
-    let inner = width as usize - 2;
     let bg = background(Slot::NotesBackground);
-    let border = color(if focused {
-        Slot::NotesBorder
-    } else {
-        Slot::NotesBorderInactive
-    });
     let mut out = io::stdout();
-
-    let title = truncate(title, inner.saturating_sub(2));
-    queue!(
-        out,
-        MoveTo(left, top),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print("╭ "),
-        SetForegroundColor(color(Slot::NotesTitle)),
-        SetAttribute(Attribute::Bold),
-        Print(&title),
-        SetAttribute(Attribute::NormalIntensity),
-        SetForegroundColor(border),
-        Print(" "),
-        Print("─".repeat(inner.saturating_sub(columns(&title) + 2))),
-        Print("╮"),
-    )?;
-    for row in 0..height - 2 {
-        queue!(
-            out,
-            MoveTo(left, top + 1 + row),
-            SetBackgroundColor(bg),
-            SetForegroundColor(border),
-            Print("│"),
-            ResetColor,
-        )?;
+    for row in 0..height {
+        queue!(out, MoveTo(left, top + row), ResetColor)?;
         match screen.get(row as usize) {
-            Some(cells) => draw_cells(&mut out, cells, inner)?,
-            None => queue!(out, SetBackgroundColor(bg), Print(" ".repeat(inner)))?,
+            Some(cells) => draw_cells(&mut out, cells, width as usize)?,
+            None => queue!(
+                out,
+                SetBackgroundColor(bg),
+                Print(" ".repeat(width as usize))
+            )?,
         }
-        queue!(
-            out,
-            SetBackgroundColor(bg),
-            SetForegroundColor(border),
-            Print("│"),
-        )?;
     }
-    queue!(
-        out,
-        MoveTo(left, top + height - 1),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print("╰"),
-        Print("─".repeat(inner)),
-        Print("╯"),
-        ResetColor,
-    )
+    queue!(out, ResetColor)
 }
 
 /* One row of the editor's screen, `width` cells */
@@ -669,16 +641,25 @@ fn draw_cells(out: &mut io::Stdout, cells: &[Cell], width: usize) -> io::Result<
             continue;
         }
         let same = last.is_some_and(|l| {
-            (l.fg, l.bg, l.bold, l.dim, l.italic, l.underline, l.strike)
-                == (
-                    cell.fg,
-                    cell.bg,
-                    cell.bold,
-                    cell.dim,
-                    cell.italic,
-                    cell.underline,
-                    cell.strike,
-                )
+            (
+                l.fg,
+                l.bg,
+                l.bold,
+                l.dim,
+                l.italic,
+                l.underline,
+                l.strike,
+                l.reverse,
+            ) == (
+                cell.fg,
+                cell.bg,
+                cell.bold,
+                cell.dim,
+                cell.italic,
+                cell.underline,
+                cell.strike,
+                cell.reverse,
+            )
         });
         if !same {
             queue!(
@@ -693,6 +674,7 @@ fn draw_cells(out: &mut io::Stdout, cells: &[Cell], width: usize) -> io::Result<
                 (cell.italic, Attribute::Italic),
                 (cell.underline, Attribute::Underlined),
                 (cell.strike, Attribute::CrossedOut),
+                (cell.reverse, Attribute::Reverse),
             ] {
                 if on {
                     queue!(out, SetAttribute(attribute))?;
@@ -746,7 +728,7 @@ pub fn layer_rect(inner: &Viewport, layer: &Layer) -> (u16, u16, u16, u16) {
 }
 
 pub fn draw_layer(layer: &Layer) -> io::Result<()> {
-    let (left, top, width, height) = layer_rect(&inner(), layer);
+    let (left, top, width, height) = layer_rect(&viewport(), layer);
     if width < 6 || height < 3 {
         return Ok(());
     }
@@ -891,9 +873,15 @@ mod tests {
     #[test]
     fn the_notes_panel_takes_the_left_and_the_layer_box_the_corner() {
         let vp = Viewport::from_size(100, 40, 1000, 800);
-        assert_eq!(notes_rect(&vp, 45), (1, 1, 44, 38));
-        /* A narrow window keeps 10 columns for the pages */
-        assert_eq!(notes_rect(&Viewport::from_size(20, 10, 200, 200), 45).2, 8);
+        let edge_to_edge = |cols, rows| {
+            let mut window = Viewport::from_size(cols, rows, cols * 10, rows * 20);
+            (window.col, window.row, window.cols, window.rows) = (0, 0, cols, rows);
+            window
+        };
+        /* The whole height, from the left edge, with no border */
+        assert_eq!(notes_rect(&edge_to_edge(100, 40), 45), (0, 0, 45, 40));
+        /* A narrow window keeps 12 columns for the PDF */
+        assert_eq!(notes_rect(&edge_to_edge(20, 10), 45).2, 8);
         let layer = Layer {
             title: "Notes".to_owned(),
             keys: vec![

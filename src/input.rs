@@ -669,21 +669,16 @@ pub fn handle_notes_key(
     }
 }
 
-/* The cell of the editor under `x`, `y` in pixels, when that's over the notes panel */
+/* The cell of the terminal under `x`, `y` in pixels, when that's over the notes panel */
 fn over_notes(app: &App, x: u16, y: u16) -> Option<(u16, u16)> {
     if !app.notes.open {
         return None;
     }
-    let inner = inner();
-    let (left, top, width, height) = ui::notes_rect(&inner, ui::notes_percent());
-    let (col, row) = ui::cell_at(&inner, x, y);
+    let window = ui::window();
+    let (left, top, width, height) = ui::notes_rect(&window, ui::notes_percent());
+    let (col, row) = ui::cell_at(&window, x, y);
     let inside = col >= left && col < left + width && row >= top && row < top + height;
-    inside.then(|| {
-        (
-            col.saturating_sub(left + 1).min(width.saturating_sub(3)),
-            row.saturating_sub(top + 1).min(height.saturating_sub(3)),
-        )
-    })
+    inside.then(|| (col - left, row - top))
 }
 
 /* Clicks and drags with the notes panel open. A click in the side that doesn't have

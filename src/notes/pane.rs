@@ -65,6 +65,8 @@ pub struct Cell {
     pub italic: bool,
     pub underline: bool,
     pub strike: bool,
+    /* Reverse video, which the outer terminal does with its own default colors */
+    pub reverse: bool,
 }
 
 pub struct Pane {
@@ -306,14 +308,8 @@ impl Pane {
                     .map(|col| {
                         let cell = &row[Column(col)];
                         let flags = cell.flags;
-                        let (mut fore, mut back) =
+                        let (fore, back) =
                             (color(cell.fg, fg, bg), color(cell.bg, fg, bg));
-                        if flags.contains(Flags::INVERSE) {
-                            std::mem::swap(&mut fore, &mut back);
-                            if fore == Color::Reset {
-                                fore = fg;
-                            }
-                        }
                         let text = if flags.intersects(
                             Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER,
                         ) {
@@ -336,6 +332,7 @@ impl Pane {
                             italic: flags.contains(Flags::ITALIC),
                             underline: flags.intersects(Flags::ALL_UNDERLINES),
                             strike: flags.contains(Flags::STRIKEOUT),
+                            reverse: flags.contains(Flags::INVERSE),
                         }
                     })
                     .collect()

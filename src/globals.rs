@@ -30,7 +30,7 @@ zoom_step = 10
 # the screen; less is faster and lighter
 resolution = 1
 # Space between pages
-page_gap = 10
+page_gap = 4
 # Turn the mouse wheel's direction around
 invert_wheel = false
 # Show where a hovered link points in the status bar

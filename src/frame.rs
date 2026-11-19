@@ -102,7 +102,8 @@ pub fn draw_frame(
         ui::draw_layer(layer).map_err(write_error)?;
     }
 
-    ui::draw_frame(&app.title, &status_segments(app, viewer, section))
+    let active = app.notes.open && !app.notes.focused;
+    ui::draw_frame(&app.title, &status_segments(app, viewer, section), active)
         .map_err(write_error)?;
     match editor_cursor(app) {
         Some((col, row, style)) => queue!(out, MoveTo(col, row), style, Show),
@@ -171,7 +172,7 @@ fn tints(app: &App) -> Vec<Tint> {
         _ => (),
     }
     if app.notes.open {
-        let rect = ui::notes_rect(&vp, ui::notes_percent());
+        let rect = ui::notes_rect(&ui::window(), ui::notes_percent());
         add(
             Slot::NotesBackground,
             graphics::NOTES_TINT_ID,
@@ -184,24 +185,22 @@ fn tints(app: &App) -> Vec<Tint> {
             Slot::LayerBackground,
             graphics::LAYER_TINT_ID,
             graphics::LAYER_Z,
-            ui::layer_rect(&vp, layer),
+            ui::layer_rect(&viewport(), layer),
         );
     }
     tints
 }
 
-/* The notes panel: the terminal, titled as its program titles it */
+/* The notes terminal, edge to edge on the left */
 fn draw_notes(app: &App) -> io::Result<()> {
-    let rect = ui::notes_rect(&ui::inner(), ui::notes_percent());
     let Some(terminal) = &app.notes.terminal else {
         return Ok(());
     };
-    let title = terminal.title.clone().unwrap_or_else(|| "Notes".to_owned());
     let screen = terminal.screen(
         paint(Slot::NotesText).color(),
         ui::background(Slot::NotesBackground),
     );
-    ui::draw_notes(rect, &title, app.notes.focused, &screen)
+    ui::draw_notes(ui::notes_rect(&ui::window(), ui::notes_percent()), &screen)
 }
 
 /* Where to show the editor's cursor, and how, while the note has the keys */
@@ -211,8 +210,8 @@ fn editor_cursor(app: &App) -> Option<(u16, u16, SetCursorStyle)> {
         return None;
     }
     let (col, row, shape) = notes.terminal.as_ref()?.cursor()?;
-    let (left, top, width, height) = ui::notes_rect(&ui::inner(), ui::notes_percent());
-    if col + 2 >= width || row + 2 >= height {
+    let (left, top, width, height) = ui::notes_rect(&ui::window(), ui::notes_percent());
+    if col >= width || row >= height {
         return None;
     }
     let style = match shape {
@@ -220,7 +219,7 @@ fn editor_cursor(app: &App) -> Option<(u16, u16, SetCursorStyle)> {
         CursorShape::Beam => SetCursorStyle::SteadyBar,
         _ => SetCursorStyle::SteadyBlock,
     };
-    Some((left + 1 + col, top + 1 + row, style))
+    Some((left + col, top + row, style))
 }
 
 /* Sends the one-pixel images that tint see-through panels */

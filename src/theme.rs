@@ -246,6 +246,7 @@ fn xterm(n: u8) -> [u8; 3] {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Slot {
     FrameBorder,
+    FrameBorderActive,
     FrameTitle,
     StatusText,
     StatusSeparator,
@@ -274,9 +275,6 @@ pub enum Slot {
     HelpText,
     HelpMuted,
     NotesBackground,
-    NotesBorder,
-    NotesBorderInactive,
-    NotesTitle,
     NotesText,
     LayerBackground,
     LayerBorder,
@@ -318,7 +316,16 @@ const fn spec(
     }
 }
 
-pub const SPECS: [Spec; 43] = [
+/* Colors earlier versions had, which a theme file may still list */
+const RETIRED: [&str; 5] = [
+    "notes.border",
+    "notes.border_inactive",
+    "notes.title",
+    "notes.muted",
+    "notes.selected",
+];
+
+pub const SPECS: [Spec; 41] = [
     spec(
         Slot::FrameBorder,
         "frame",
@@ -326,6 +333,14 @@ pub const SPECS: [Spec; 43] = [
         "bright-black",
         false,
         "The rounded border",
+    ),
+    spec(
+        Slot::FrameBorderActive,
+        "frame",
+        "border_active",
+        "bright-cyan",
+        false,
+        "The border while the PDF has the keys beside the notes terminal",
     ),
     spec(
         Slot::FrameTitle,
@@ -545,30 +560,6 @@ pub const SPECS: [Spec; 43] = [
         "Behind the note",
     ),
     spec(
-        Slot::NotesBorder,
-        "notes",
-        "border",
-        "bright-cyan",
-        false,
-        "Its border while it has the keys",
-    ),
-    spec(
-        Slot::NotesBorderInactive,
-        "notes",
-        "border_inactive",
-        "bright-black",
-        false,
-        "Its border while the PDF has them",
-    ),
-    spec(
-        Slot::NotesTitle,
-        "notes",
-        "title",
-        "default",
-        false,
-        "The note's name in the top edge",
-    ),
-    spec(
         Slot::NotesText,
         "notes",
         "text",
@@ -732,7 +723,9 @@ impl Theme {
                 let Some(spec) =
                     SPECS.iter().find(|s| s.section == section && s.key == key)
                 else {
-                    problems.push(format!("{}: no such color", name));
+                    if !RETIRED.contains(&name.as_str()) {
+                        problems.push(format!("{}: no such color", name));
+                    }
                     continue;
                 };
                 let paint = match value {
@@ -871,5 +864,7 @@ mod tests {
             "frame.title: only backgrounds and page colors can be see-through"
         ));
         assert!(said("contents.foo: no such color"));
+        let (_, old) = Theme::parse("[notes]\nborder = \"red\"\n");
+        assert!(old.is_empty(), "a retired color is no mistake: {:?}", old);
     }
 }

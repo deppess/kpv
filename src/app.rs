@@ -409,15 +409,14 @@ pub fn save_panel_sizes() {
 
 /* The size of the editor in the notes panel: the panel inside its border */
 pub fn editor_size() -> EditorSize {
-    let inner = ui::inner();
-    let (_, _, width, height) = ui::notes_rect(&inner, ui::notes_percent());
-    let (cols, rows) = (width.saturating_sub(2), height.saturating_sub(2));
+    let window = ui::window();
+    let (_, _, cols, rows) = ui::notes_rect(&window, ui::notes_percent());
     EditorSize {
         cols,
         rows,
         pixels: (
-            (cols as f64 * inner.pxpercol) as u16,
-            (rows as f64 * inner.pxperrow) as u16,
+            (cols as f64 * window.pxpercol) as u16,
+            (rows as f64 * window.pxperrow) as u16,
         ),
     }
 }
@@ -426,7 +425,7 @@ pub fn editor_size() -> EditorSize {
  * when it isn't, keeping the zoom and the place; the editor follows the panel's size */
 pub fn apply_layout(viewer: &mut Viewer, app: &mut App) {
     let cols = if app.notes.open {
-        ui::notes_rect(&ui::inner(), ui::notes_percent()).2
+        ui::notes_rect(&ui::window(), ui::notes_percent()).2
     } else {
         0
     };
