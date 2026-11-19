@@ -62,6 +62,8 @@ use crate::threads::Wake;
 use crate::ui::{help_max_scroll, help_visible, inner, toc_visible};
 use crate::viewer::*;
 
+/* The least time between frames: 120 a second */
+const FRAME_GAP: Duration = Duration::from_millis(8);
 /* How long the first keys of a sequence wait for the rest: long, since a layer shows
  * what can follow and gives time to read it */
 const SEQUENCE_WAIT: Duration = Duration::from_secs(3600);
@@ -250,12 +252,18 @@ fn main() {
         modifiers: KeyModifiers::NONE,
     };
 
+    /* When the last frame went out, and the next one when it had to wait */
+    let mut last_frame = Instant::now() - FRAME_GAP;
+    let mut frame_due: Option<Instant> = None;
+
     'main: loop {
-        /* Wake up to write the position once the view has stayed put, and to take a
-         * message away once it has been on show for a while */
+        /* Wake up to write the position once the view has stayed put, to take a
+         * message away once it has been on show for a while, and to draw a frame
+         * that had to wait */
         let due = [
             app.save_due.as_ref().map(|(_, at)| *at),
             message_due(&mut app),
+            frame_due,
         ]
         .into_iter()
         .flatten()
@@ -352,7 +360,7 @@ fn main() {
             .is_some_and(|(_, since)| *since + MESSAGE_TIME <= now);
         if shown_long {
             app.message = None;
-        } else if timed_out {
+        } else if timed_out && frame_due.is_none() {
             /* Only the position was written: the screen is as it was */
             app.link = hovered;
             continue 'main;
@@ -366,6 +374,15 @@ fn main() {
         if only_mouse && !clicked && app.link == hovered {
             continue 'main;
         }
+
+        /* A program pouring out text in the notes terminal would otherwise have every
+         * read drawn, thousands of frames a second that kitty never shows */
+        if last_frame.elapsed() < FRAME_GAP {
+            frame_due = Some(last_frame + FRAME_GAP);
+            continue 'main;
+        }
+        frame_due = None;
+        last_frame = Instant::now();
 
         /* ================================ Draw a frame ================================ */
         let gr = RECEIVER_GR.get().unwrap().lock().unwrap();

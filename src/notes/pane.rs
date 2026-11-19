@@ -20,13 +20,14 @@ use std::{
 
 use alacritty_terminal::{
     event::{Event, EventListener, WindowSize},
-    grid::Dimensions,
+    grid::{Dimensions, Scroll},
     index::{Column, Line},
+    term::ClipboardType,
     term::{cell::Flags, Config, Term, TermMode},
     vte::ansi::{Color as TermColor, CursorShape, NamedColor, Processor, Rgb},
 };
 use crossterm::{
-    event::{KeyEvent, KeyModifiers, MouseEventKind},
+    event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind},
     style::{Attribute, Attributes, Color},
 };
 
@@ -81,6 +82,10 @@ pub struct Style {
     pub attributes: Attributes,
 }
 
+/* Lines kept of what scrolled off the top, and how many the wheel moves */
+const HISTORY: usize = 5000;
+const WHEEL_LINES: i32 = 3;
+
 pub struct Pane {
     /* The terminal's side of the pseudo-terminal */
     master: File,
@@ -95,7 +100,8 @@ pub struct Pane {
     pixels: (u16, u16),
     /* The title the program gave its window */
     pub title: Option<String>,
-    /* Image commands taken out of the output, and what they become for kitty */
+    /* Image commands taken out of the output, and what they and copies to the
+     * clipboard become for kitty */
     splitter: Splitter,
     translator: Translator,
     graphics: Vec<u8>,
@@ -174,7 +180,7 @@ impl Pane {
         let events = Arc::new(Mutex::new(Vec::new()));
         let config = Config {
             kitty_keyboard: true,
-            scrolling_history: 0,
+            scrolling_history: HISTORY,
             ..Config::default()
         };
         let size = Size {
@@ -253,6 +259,19 @@ impl Pane {
                     self.title = None;
                     continue;
                 }
+                /* A copy (OSC 52, as helix over ssh, tmux and nvim do it) goes on to
+                 * kitty, which puts it on the clipboard */
+                Event::ClipboardStore(kind, text) => {
+                    use base64::{engine::general_purpose::STANDARD, Engine};
+                    let target = match kind {
+                        ClipboardType::Selection => 'p',
+                        ClipboardType::Clipboard => 'c',
+                    };
+                    let copy =
+                        format!("\x1b]52;{};{}\x1b\\", target, STANDARD.encode(text));
+                    self.graphics.extend(copy.bytes());
+                    continue;
+                }
                 Event::TextAreaSizeRequest(format) => format(WindowSize {
                     num_lines: self.rows,
                     num_cols: self.cols,
@@ -289,13 +308,30 @@ impl Pane {
     }
 
     pub fn key(&mut self, key: &KeyEvent) {
+        /* Shift-PageUp and -PageDown page through what scrolled off, as in most
+         * terminals, unless the program has the whole screen to itself */
+        let paging = key.modifiers == KeyModifiers::SHIFT
+            && !self.mode().contains(TermMode::ALT_SCREEN);
+        match key.code {
+            KeyCode::PageUp if paging => return self.scroll(self.rows as i32 - 1),
+            KeyCode::PageDown if paging => return self.scroll(1 - self.rows as i32),
+            _ => (),
+        }
+        /* Typing goes back to the bottom, where it shows */
+        self.term.scroll_display(Scroll::Bottom);
         let bytes = encode_key(key, self.mode());
         self.send(&bytes);
     }
 
     pub fn paste(&mut self, text: &str) {
+        self.term.scroll_display(Scroll::Bottom);
         let bytes = encode_paste(text, self.mode());
         self.send(&bytes);
+    }
+
+    /* Moves the view `lines` back into what scrolled off, or forward with fewer */
+    fn scroll(&mut self, lines: i32) {
+        self.term.scroll_display(Scroll::Delta(lines));
     }
 
     pub fn focus(&mut self, gained: bool) {
@@ -311,7 +347,18 @@ impl Pane {
         col: u16,
         row: u16,
     ) {
-        let bytes = encode_mouse(kind, mods, col, row, self.mode());
+        /* The wheel goes to a program that takes the mouse or has the whole screen;
+         * otherwise it scrolls back through what scrolled off */
+        let mode = self.mode();
+        if !mode.intersects(TermMode::MOUSE_MODE) && !mode.contains(TermMode::ALT_SCREEN)
+        {
+            match kind {
+                MouseEventKind::ScrollUp => return self.scroll(WHEEL_LINES),
+                MouseEventKind::ScrollDown => return self.scroll(-WHEEL_LINES),
+                _ => (),
+            }
+        }
+        let bytes = encode_mouse(kind, mods, col, row, mode);
         self.send(&bytes);
     }
 
@@ -356,9 +403,10 @@ impl Pane {
      * colors. */
     pub fn screen(&self, fg: Color, bg: Color) -> Vec<Vec<Cell>> {
         let grid = self.term.grid();
+        let back = grid.display_offset() as i32;
         (0..grid.screen_lines())
             .map(|line| {
-                let row = &grid[Line(line as i32)];
+                let row = &grid[Line(line as i32 - back)];
                 (0..grid.columns())
                     .map(|col| {
                         let cell = &row[Column(col)];
@@ -427,7 +475,10 @@ impl Pane {
 
     /* Where the cursor is, 0-indexed, and its shape, when the program shows it */
     pub fn cursor(&self) -> Option<(u16, u16, CursorShape)> {
-        if !self.mode().contains(TermMode::SHOW_CURSOR) {
+        /* Scrolled back, the cursor is below what shows */
+        if !self.mode().contains(TermMode::SHOW_CURSOR)
+            || self.term.grid().display_offset() > 0
+        {
             return None;
         }
         let point = self.term.grid().cursor.point;
@@ -575,6 +626,33 @@ mod tests {
         let answer = std::fs::read_to_string(&answer_file).unwrap_or_default();
         let _ = std::fs::remove_file(&answer_file);
         assert!(answer.contains("?   0   u"), "answer: {:?}", answer);
+    }
+
+    #[test]
+    fn a_copy_goes_on_to_kittys_clipboard() {
+        /* `hello`, as helix copies it over ssh */
+        let mut pane = run_until("printf '\\033]52;c;aGVsbG8=\\007'; sleep 2", |p| {
+            !p.graphics.is_empty()
+        });
+        assert_eq!(pane.take_graphics(), b"\x1b]52;c;aGVsbG8=\x1b\\");
+    }
+
+    #[test]
+    fn what_scrolled_off_can_be_scrolled_back_to() {
+        /* Four rows, ten lines: 1 to 6 scrolled off */
+        let mut pane = run_until("seq 1 10; sleep 2", |p| {
+            p.text().iter().any(|r| r.trim() == "10")
+        });
+        let top = |p: &Pane| p.text()[0].trim().to_owned();
+        assert_eq!(top(&pane), "8");
+        pane.mouse(MouseEventKind::ScrollUp, KeyModifiers::NONE, 0, 0);
+        assert_eq!(top(&pane), "5");
+        assert!(pane.cursor().is_none(), "no cursor while scrolled back");
+        pane.key(&KeyEvent::new(KeyCode::PageUp, KeyModifiers::SHIFT));
+        assert_eq!(top(&pane), "2");
+        /* Typing goes back to the bottom */
+        pane.key(&KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert_eq!(top(&pane), "8");
     }
 
     #[test]

@@ -685,7 +685,16 @@ fn over_notes(app: &App, x: u16, y: u16) -> Option<(u16, u16)> {
  * the keys gives it the keys and does nothing else; in the notes panel the mouse then
  * reaches the editor. `true` when the event was the panel's. */
 pub fn notes_mouse(mouse: &mut MouseEvent, viewer: &mut Viewer, app: &mut App) -> bool {
-    if !app.notes.open
+    /* The wheel comes as input too, and goes to the terminal from there */
+    let wheel = matches!(
+        mouse.kind,
+        MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown
+            | MouseEventKind::ScrollLeft
+            | MouseEventKind::ScrollRight
+    );
+    if wheel
+        || !app.notes.open
         || (app.mode == Mode::Toc && ui::over_toc(&viewport(), mouse.column, mouse.row))
     {
         return false;
