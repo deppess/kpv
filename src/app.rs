@@ -264,6 +264,36 @@ pub fn ruler_band(app: &mut App, viewer: &Viewer) -> Option<(f64, f64, f64, f64)
     ))
 }
 
+/* Where the panel sizes are kept between runs */
+fn panel_sizes_file() -> Option<PathBuf> {
+    Some(Store::default_dir()?.join("panels.toml"))
+}
+
+/* Reads the contents panel's width from last time */
+pub fn load_panel_sizes() {
+    let Some(text) = panel_sizes_file().and_then(|f| std::fs::read_to_string(f).ok())
+    else {
+        return;
+    };
+    let width = text
+        .parse::<toml::Table>()
+        .ok()
+        .and_then(|t| t.get("contents_width")?.as_integer());
+    if let Some(width) = width {
+        ui::set_toc_percent(width.clamp(0, 100) as u16);
+    }
+}
+
+pub fn save_panel_sizes() {
+    let Some(file) = panel_sizes_file() else {
+        return;
+    };
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(file, format!("contents_width = {}\n", ui::toc_percent()));
+}
+
 /* The size of the editor in the notes panel: the panel inside its border */
 pub fn editor_size() -> EditorSize {
     let inner = ui::inner();

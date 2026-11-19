@@ -75,6 +75,7 @@ Each file gets one small TOML file in `~/.local/state/viewmer/` (or under `$XDG_
 | `h` / `Left` | Fold, or step out to the parent entry |
 | `za`, `zM`, `zR` | Fold or unfold one entry, fold all, unfold all |
 | `/text` | Keep only the entries that contain the text, and their parents |
+| `+` / `-` | Wider / narrower; the width is kept for next time |
 | `Enter` | Go there and close the panel |
 | `Space` | Go there and keep the panel open |
 | `Esc`, `q`, `o`, `Tab` | Clear the filter, then close |

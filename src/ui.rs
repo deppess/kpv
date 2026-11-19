@@ -370,10 +370,24 @@ pub fn draw_help(lines: &[HelpLine], scroll: usize) -> io::Result<()> {
     )
 }
 
+/* How wide the contents panel is, in percent of the pages' width; `+` and `-` in the
+ * panel change it */
+static TOC_PERCENT: AtomicU16 = AtomicU16::new(35);
+pub const TOC_PERCENT_RANGE: (u16, u16) = (15, 85);
+
+pub fn toc_percent() -> u16 {
+    TOC_PERCENT.load(Ordering::Acquire)
+}
+
+pub fn set_toc_percent(percent: u16) {
+    let (low, high) = TOC_PERCENT_RANGE;
+    TOC_PERCENT.store(percent.clamp(low, high), Ordering::Release);
+}
+
 /* Columns the contents panel takes on the left of the viewport */
 pub fn toc_width(vp: &Viewport) -> u16 {
-    ((vp.cols as u32 * 35 / 100) as u16)
-        .clamp(28, 60)
+    ((vp.cols as u32 * toc_percent() as u32 / 100) as u16)
+        .max(20)
         .min(vp.cols)
 }
 
@@ -894,7 +908,7 @@ mod tests {
         let narrow = Viewport::from_size(20, 10, 200, 200);
         assert_eq!(toc_width(&narrow), 18);
         let wide = Viewport::from_size(300, 40, 3000, 800);
-        assert_eq!(toc_width(&wide), 60);
+        assert_eq!(toc_width(&wide), 104);
     }
 
     #[test]

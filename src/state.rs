@@ -249,6 +249,7 @@ const GROUPS: [Group; 9] = [
             ("/", "Keep only entries with the text"),
             ("Enter", "Go there and close"),
             ("Space", "Go there, keep it open"),
+            ("+ -", "Wider, narrower (kept for next time)"),
             ("Esc", "Clear the filter, then close"),
         ],
     ),

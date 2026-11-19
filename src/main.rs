@@ -152,6 +152,7 @@ fn main() {
             .collect(),
     );
     global_keys.set_timeout(SEQUENCE_WAIT);
+    load_panel_sizes();
     /* A broken theme falls back to the default colors and says so */
     let theme_problems = match config_folder() {
         Ok(folder) => {

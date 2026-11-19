@@ -83,13 +83,14 @@ pub fn handle_key(
                     }
                 }
                 /* The key that opens the panel closes it too, whatever it's bound to */
-                TocKey::Other => {
-                    if key_matcher.dispatch(KeyInput::from(key))
-                        == Some(&ConfigAction::ShowOutline)
-                    {
-                        app.mode = Mode::Normal;
-                    }
-                }
+                TocKey::Other => match key_matcher.dispatch(KeyInput::from(key)).copied()
+                {
+                    Some(ConfigAction::ShowOutline) => app.mode = Mode::Normal,
+                    /* The zoom keys make the panel wider and narrower */
+                    Some(ConfigAction::ZoomIn) => resize_toc(5, app),
+                    Some(ConfigAction::ZoomOut) => resize_toc(-5, app),
+                    _ => (),
+                },
             }
             return false;
         }
@@ -748,4 +749,13 @@ pub fn layer_popup(matcher: &Keybinds<ConfigAction>) -> Option<ui::Layer> {
         })
         .collect();
     Some(ui::Layer { title, keys })
+}
+
+/* Widens or narrows the contents panel by `step` percent of the pages' width, and
+ * keeps the width for next time */
+fn resize_toc(step: i16, app: &mut App) {
+    let percent = (ui::toc_percent() as i16 + step).max(0) as u16;
+    ui::set_toc_percent(percent);
+    save_panel_sizes();
+    app.message = Some(format!("Contents {}% wide", ui::toc_percent()));
 }
