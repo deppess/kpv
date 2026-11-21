@@ -5,7 +5,7 @@ use crossterm::Command;
 pub struct ClearImages;
 impl Command for ClearImages {
     fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        /* Only the pages, by their layers: the notes terminal's images stay */
+        /* Only the pages, by their layers: the panels' tints stay */
         write!(
             f,
             "\x1B_Gq=2,a=d,d=z,z={}\x1B\\\x1B_Gq=2,a=d,d=z,z={}\x1B\\",

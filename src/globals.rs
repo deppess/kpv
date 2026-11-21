@@ -9,7 +9,6 @@ use std::sync::{
 pub const HELP_MSG: &str = r#"viewmer: kitty terminal PDF viewer
 
 Usage: viewmer <file>
-       viewmer --note <file> [name]   Makes the file's note if needed and prints where
 
 Global options:
 -h, --help          Print this usage information.
@@ -36,37 +35,14 @@ page_gap = 4
 invert_wheel = false
 # Show where a hovered link points in the status bar
 link_hints = true
-# Open every file where you left it, with its marks
+# Open every file where you left it
 remember_position = true
-
-[notes]
-# The folder your notes are in. The editor starts there, so its own settings for
-# that folder (language servers and the like) apply.
-vault = "~/Notes"
-# Where new notes go, inside the vault; empty for the vault itself
-folder = ""
-# The shell in the notes panel; empty for the one you log in with
-shell = ""
-# The editor `pdfnote` opens; `hx` in the panel saves when focus leaves it
-editor = "hx"
-# A note to start new ones from, where {{title}} becomes the note's name and
-# {{source}} a link to the PDF. Empty for a title and a link.
-template = ""
-# How wide the notes panel is, in percent of the window
-width = 45
 
 # Keys, as "key" = "Action", added to the defaults; "key" = "" unbinds a default.
 # The actions are listed in the README.
 [bindings]
-"Ctrl+a" = "ToggleAlpha"
 "Ctrl+r" = "ToggleInverse"
-"Ctrl+o" = "JumpBack"
-"Ctrl+n" = "JumpForward"
-"m" = "SetMark"
-"`" = "GoToMark"
-"'" = "GoToMark"
 "C" = "CenterViewer"
-"r" = "ToggleRuler"
 "h" = "MoveLeft"
 "j" = "MoveDown"
 "k" = "MoveUp"
@@ -98,17 +74,11 @@ width = 45
 "Esc" = "ClearSearch"
 "o" = "ShowOutline"
 "Tab" = "ShowOutline"
-"Ctrl+h" = "ToggleNote"
-"Ctrl+l" = "FocusPdf"
-"Alt+t" = "TagPage"
-"Alt+g" = "GoToTag"
-"Ctrl+=" = "WidenNote"
-"Ctrl+-" = "NarrowNote"
 "J" = "NextPage"
 "K" = "PrevPage"
 "#;
 
-/* Hate on me for those global singletons as much as you want. */
+/* Set once at start and read from every thread */
 pub static CONFIG: OnceLock<Config> = OnceLock::new();
 /* What kitty answers to image commands: the text after `;`, such as `OK` */
 pub static RECEIVER_GR: OnceLock<Mutex<Receiver<String>>> = OnceLock::new();

@@ -1,10 +1,9 @@
-/* Drawing one frame: pages, ruler, contents panel and the frame with its status bar */
+/* Drawing one frame: pages, contents panel and the frame with its status bar */
 
 use std::io::{self, Write};
 use std::time::Duration;
 
-use alacritty_terminal::vte::ansi::CursorShape;
-use crossterm::cursor::{Hide, MoveTo, SetCursorStyle, Show};
+use crossterm::cursor::MoveTo;
 use crossterm::terminal::{
     BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate,
 };
@@ -12,16 +11,13 @@ use crossterm::{execute, queue};
 use std::sync::mpsc::Receiver;
 
 use crate::app::*;
-use crate::config::*;
-use crate::drivers;
 use crate::drivers::commands::{ClearImages, PointerShape, SetPointerShape};
 use crate::drivers::graphics;
-use crate::image::*;
 use crate::outline::{breadcrumb, current_section};
 use crate::state::*;
 use crate::theme::{paint, Slot};
-use crate::threads::renderer::{page_color, Renderer};
-use crate::ui::{self, inner, toc_visible, viewport, Segment, TocRow};
+use crate::threads::renderer::Renderer;
+use crate::ui::{self, toc_visible, viewport, Segment, TocRow};
 use crate::viewer::*;
 
 pub fn write_error(e: io::Error) -> String {
@@ -32,8 +28,8 @@ pub fn write_error(e: io::Error) -> String {
 const RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
 
 /* Draws one frame in a synchronized update and returns the pages placed in it, whose
- * answers from kitty are due. Text is drawn every time; page images and the ruler only
- * when they differ from the last frame's, so that a frame that only changes text
+ * answers from kitty are due. Text is drawn every time; page images only when they
+ * differ from the last frame's, so that a frame that only changes text
  * (prompts, the contents panel, the status bar) costs kitty no image work. */
 pub fn draw_frame(
     viewer: &mut Viewer,
@@ -42,13 +38,11 @@ pub fn draw_frame(
 ) -> Result<Vec<usize>, String> {
     let shown = Shown {
         pages: viewer.plan_pages(renderer),
-        ruler: ruler_band(app, viewer).and_then(|b| ruler_placement(b, &viewport())),
         tints: tints(app),
     };
     let Changes {
         clear,
         pages,
-        ruler,
         tints,
         hide,
     } = changes(app.shown.as_ref(), &shown);
@@ -68,16 +62,6 @@ pub fn draw_frame(
         page.place()?;
         displayed.push(page.page);
     }
-    if ruler {
-        match &shown.ruler {
-            Some(ruler) => place_ruler(app, ruler),
-            None => {
-                let _ = drivers::graphics::terminal_graphics_hide(
-                    drivers::graphics::RULER_ID,
-                );
-            }
-        }
-    }
     for t in &tints {
         graphics::terminal_graphics_place_tint(t.id, t.z, t.col, t.row, t.cols, t.rows)?;
     }
@@ -85,9 +69,6 @@ pub fn draw_frame(
         graphics::terminal_graphics_hide(id)?;
     }
     app.shown = Some(shown);
-    if app.notes.open {
-        draw_notes(app).map_err(write_error)?;
-    }
     if let Mode::Help { scroll } = app.mode {
         ui::draw_help(&app.help, scroll).map_err(write_error)?;
     }
@@ -95,17 +76,11 @@ pub fn draw_frame(
     let (page, y) = viewer.reading_spot();
     let section = current_section(&app.toc.entries, page, y);
     if app.mode == Mode::Toc {
-        draw_toc(app, viewer, section).map_err(write_error)?;
+        draw_toc(app, section).map_err(write_error)?;
     }
 
-    let active = app.notes.open && !app.notes.focused;
-    ui::draw_frame(&app.title, &status_segments(app, viewer, section), active)
+    ui::draw_frame(&app.title, &status_segments(app, viewer, section))
         .map_err(write_error)?;
-    match editor_cursor(app) {
-        Some((col, row, style)) => queue!(out, MoveTo(col, row), style, Show),
-        None => queue!(out, Hide),
-    }
-    .map_err(write_error)?;
     queue!(out, EndSynchronizedUpdate).map_err(write_error)?;
     out.flush().map_err(write_error)?;
     Ok(displayed)
@@ -113,7 +88,7 @@ pub fn draw_frame(
 
 /* Tints under the see-through panels on screen */
 fn tints(app: &App) -> Vec<Tint> {
-    let vp = inner();
+    let vp = viewport();
     let mut tints = Vec::new();
     let mut add = |slot, id, z, (left, top, width, height): (u16, u16, u16, u16)| {
         if paint(slot).see_through() && width > 0 && height > 0 {
@@ -129,7 +104,6 @@ fn tints(app: &App) -> Vec<Tint> {
     };
     match app.mode {
         Mode::Toc => {
-            /* Beside the note, with the pages */
             let vp = viewport();
             let width = ui::toc_width(&vp);
             add(
@@ -167,47 +141,7 @@ fn tints(app: &App) -> Vec<Tint> {
         ),
         _ => (),
     }
-    if app.notes.open {
-        let rect = ui::notes_rect(&ui::window(), ui::notes_percent());
-        add(
-            Slot::NotesBackground,
-            graphics::NOTES_TINT_ID,
-            graphics::PANEL_Z,
-            rect,
-        );
-    }
     tints
-}
-
-/* The notes terminal, edge to edge on the left */
-fn draw_notes(app: &App) -> io::Result<()> {
-    let Some(terminal) = &app.notes.terminal else {
-        return Ok(());
-    };
-    let screen = terminal.screen(
-        paint(Slot::NotesText).color(),
-        ui::background(Slot::NotesBackground),
-    );
-    ui::draw_notes(ui::notes_rect(&ui::window(), ui::notes_percent()), &screen)
-}
-
-/* Where to show the editor's cursor, and how, while the note has the keys */
-fn editor_cursor(app: &App) -> Option<(u16, u16, SetCursorStyle)> {
-    let notes = &app.notes;
-    if !(notes.open && notes.focused) {
-        return None;
-    }
-    let (col, row, shape) = notes.terminal.as_ref()?.cursor()?;
-    let (left, top, width, height) = ui::notes_rect(&ui::window(), ui::notes_percent());
-    if col >= width || row >= height {
-        return None;
-    }
-    let style = match shape {
-        CursorShape::Underline => SetCursorStyle::SteadyUnderScore,
-        CursorShape::Beam => SetCursorStyle::SteadyBar,
-        _ => SetCursorStyle::SteadyBlock,
-    };
-    Some((left + col, top + row, style))
 }
 
 /* Sends the one-pixel images that tint see-through panels */
@@ -216,7 +150,6 @@ pub fn send_tints() {
         (Slot::ContentsBackground, graphics::CONTENTS_TINT_ID),
         (Slot::ContentsSelected, graphics::SELECTED_TINT_ID),
         (Slot::HelpBackground, graphics::HELP_TINT_ID),
-        (Slot::NotesBackground, graphics::NOTES_TINT_ID),
     ] {
         let p = paint(slot);
         if let (true, Some([r, g, b]), Some(a)) = (p.see_through(), p.rgb(), p.alpha()) {
@@ -242,9 +175,6 @@ pub fn status_segments(
         }
         Mode::Help { .. } => segments.push(Segment::new("HELP", Slot::StatusHelp)),
         Mode::Toc => segments.push(Segment::new("TOC", Slot::StatusContents)),
-        Mode::Normal if app.notes.open && app.notes.focused => {
-            segments.push(Segment::new("NOTE", Slot::StatusNotes))
-        }
         Mode::Normal => segments.push(Segment::new("NOR", Slot::StatusNormal)),
     }
     if viewer.pages() > 0 {
@@ -256,13 +186,6 @@ pub fn status_segments(
     }
     if let Some(count) = app.count {
         segments.push(Segment::new(count.to_string(), Slot::StatusText));
-    }
-    match app.pending_mark {
-        Some(ConfigAction::SetMark) => {
-            segments.push(Segment::new("m…", Slot::StatusText))
-        }
-        Some(_) => segments.push(Segment::new("`…", Slot::StatusText)),
-        None => (),
     }
     if let Some(search) = &app.search {
         segments.push(Segment::new(search.status(), Slot::StatusMatches));
@@ -282,7 +205,7 @@ pub fn status_segments(
     segments
 }
 
-pub fn draw_toc(app: &App, viewer: &Viewer, section: Option<usize>) -> io::Result<()> {
+pub fn draw_toc(app: &App, section: Option<usize>) -> io::Result<()> {
     let toc = &app.toc;
     let rows = toc.rows();
     let visible: Vec<TocRow> = rows
@@ -299,7 +222,7 @@ pub fn draw_toc(app: &App, viewer: &Viewer, section: Option<usize>) -> io::Resul
                     (true, false) => '▸',
                 },
                 title: entry.title.clone(),
-                label: entry.page.map(|p| viewer.page_label(p)).unwrap_or_default(),
+                label: entry.page.map(|p| (p + 1).to_string()).unwrap_or_default(),
                 selected: i == toc.selected,
                 current: Some(i) == section,
             }
@@ -315,37 +238,6 @@ pub fn draw_toc(app: &App, viewer: &Viewer, section: Option<usize>) -> io::Resul
         "⏎ go · ␣ peek · h/l fold · / find".to_owned()
     };
     ui::draw_toc(&visible, &position, &footer)
-}
-
-/* Lays the ruler over its line; the image is sent again only when its pixels change,
- * not when it just moves */
-fn place_ruler(app: &mut App, placement: &RulerPlacement) {
-    let ([r, g, b], alpha) = page_color(Slot::PagesRuler, [90, 160, 255], 70);
-    let same_pixels = app.ruler_image.as_ref().is_some_and(|old| {
-        (old.width, old.height, old.band)
-            == (placement.width, placement.height, placement.band)
-    });
-    if !same_pixels {
-        let data = ruler_bitmap(placement, [r, g, b, alpha]);
-        if drivers::graphics::terminal_graphics_transfer_bitmap(
-            drivers::graphics::RULER_ID,
-            placement.width,
-            placement.height,
-            &data,
-            true,
-        )
-        .is_err()
-        {
-            return;
-        }
-        app.ruler_image = Some(placement.clone());
-    }
-    let _ = drivers::graphics::terminal_graphics_place_ruler(
-        placement.col,
-        placement.row,
-        placement.cols,
-        placement.rows,
-    );
 }
 
 /* Sends the pointer shape when it changes */

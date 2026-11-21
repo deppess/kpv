@@ -51,7 +51,6 @@ pub fn terminal_graphics_transfer_bitmap(
     width: usize,
     height: usize,
     data: &[u8],
-    alpha: bool,
 ) -> Result<(), String> {
     let mut handle = stdout().lock();
     let mut tmp_file_path = std::env::temp_dir();
@@ -82,8 +81,7 @@ pub fn terminal_graphics_transfer_bitmap(
     /* First chunk with bitmap metadata */
     write!(
         handle,
-        "\x1B_Gq=2,f={},i={},s={},v={},t=t;{}\x1B\\",
-        if alpha { 32 } else { 24 },
+        "\x1B_Gq=2,f=32,i={},s={},v={},t=t;{}\x1B\\",
         id,
         width,
         height,
@@ -117,22 +115,19 @@ pub fn terminal_graphics_display_image(
 
 /* Images at a z-index below -1,073,741,824 are drawn behind cells with a colored
  * background, which lets an opaque panel cover them, and every negative z-index is
- * behind text. From the bottom up: pages, the ruler over them, the tint of a
- * see-through panel, and the tint of the selected entry in it. */
+ * behind text. From the bottom up: pages, the tint of a see-through panel, and the
+ * tint of the selected entry in it. */
 pub const PAGE_Z: i64 = -1_073_741_830;
 /* A coarse whole page under the sharp part of a page, showing where that ends */
 pub const UNDER_Z: i64 = -1_073_741_831;
-const RULER_Z: i64 = -1_073_741_829;
 pub const PANEL_Z: i64 = -1_073_741_828;
 pub const SELECTED_Z: i64 = -1_073_741_827;
 
-/* The ruler's image ID; page images count up from 1 and never get this far */
-pub const RULER_ID: usize = 0x7FFF_0001;
-/* Images of one pixel each, stretched under see-through panels */
-pub const CONTENTS_TINT_ID: usize = 0x7FFF_0002;
-pub const SELECTED_TINT_ID: usize = 0x7FFF_0003;
-pub const HELP_TINT_ID: usize = 0x7FFF_0004;
-pub const NOTES_TINT_ID: usize = 0x7FFF_0005;
+/* Images of one pixel each, stretched under see-through panels; page images count up
+ * from 1 and never get this far */
+pub const CONTENTS_TINT_ID: usize = 0x7FFF_0001;
+pub const SELECTED_TINT_ID: usize = 0x7FFF_0002;
+pub const HELP_TINT_ID: usize = 0x7FFF_0003;
 
 /* Sends a one-pixel image, straight in the command since it's tiny. Quiet. */
 pub fn terminal_graphics_send_pixel(id: usize, rgba: [u8; 4]) -> Result<(), String> {
@@ -175,30 +170,10 @@ pub fn terminal_graphics_hide(id: usize) -> Result<(), String> {
         .map_err(io_error)
 }
 
-/* Shows the ruler image over `cols` x `rows` cells from a 1-indexed cell, moving it
- * if it's shown already (it has the one placement, 1). Quiet, so no answer gets mixed
- * up with the answers for pages. */
-pub fn terminal_graphics_place_ruler(
-    col: usize,
-    row: usize,
-    cols: usize,
-    rows: usize,
-) -> Result<(), String> {
-    let mut handle = stdout().lock();
-    write!(
-        handle,
-        "\x1B[s\x1B[{};{}H\x1B_Gq=2,z={},a=p,C=1,i={},p=1,c={},r={};\x1B\\\x1B[u",
-        row, col, RULER_Z, RULER_ID, cols, rows
-    )
-    .and_then(|_| handle.flush())
-    .map_err(io_error)
-}
-
 fn io_error(x: std::io::Error) -> String {
     format!("Could not write to the terminal: {}", x)
 }
 
-/* A structure which extracts the Kitty graphics response in a lazy way */
 /* Removes temporary image files that kitty never read: this instance's, and any
  * older than a minute from earlier instances (kitty reads them within
  * milliseconds, so those are stale) */

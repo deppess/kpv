@@ -5,12 +5,7 @@ mod frame;
 mod globals;
 mod image;
 mod input;
-mod jumps;
-mod labels;
-mod notes;
-mod numbers;
 mod outline;
-mod ruler;
 mod state;
 mod store;
 #[cfg(test)]
@@ -19,9 +14,7 @@ mod theme;
 mod threads;
 mod ui;
 mod viewer;
-mod watch;
 
-use std::collections::BTreeMap;
 use std::hash::{BuildHasher, Hasher, RandomState};
 use std::io;
 use std::path::Path;
@@ -29,9 +22,8 @@ use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-use crossterm::cursor::{Hide, SetCursorStyle, Show};
+use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
-    DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange,
     KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, MouseEvent, MouseEventKind,
     PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
@@ -40,7 +32,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, window_size, Clear, ClearType,
     EnterAlternateScreen, LeaveAlternateScreen,
 };
-use keybinds::{Keybinds, Mods};
+use keybinds::Keybinds;
 
 use crate::app::*;
 use crate::config::*;
@@ -51,15 +43,13 @@ use crate::drivers::graphics::terminal_graphics_test_support;
 use crate::frame::*;
 use crate::globals::*;
 use crate::input::*;
-use crate::jumps::Jumps;
 use crate::outline::Toc;
-use crate::ruler::Lines;
 use crate::state::*;
 use crate::theme::{set_theme, Theme};
 use crate::threads::event::InputEvent;
 use crate::threads::renderer::{Renderer, RendererAction};
 use crate::threads::Wake;
-use crate::ui::{help_max_scroll, help_visible, inner, toc_visible};
+use crate::ui::{help_max_scroll, help_visible, toc_visible, viewport};
 use crate::viewer::*;
 
 /* The least time between frames: 120 a second */
@@ -79,32 +69,10 @@ fn main() {
         }
         _ => (),
     }
-    /* `pdfnote` in the notes terminal: find or make a PDF's note and say where it is */
-    if arg == "--note" {
-        let args: Vec<String> = std::env::args().skip(2).collect();
-        let Some((pdf, name)) = args.split_first() else {
-            eprintln!("viewmer: --note needs the PDF");
-            std::process::exit(1);
-        };
-        match note_for(pdf, &name.join(" ")) {
-            Ok(path) => println!("{}", path.display()),
-            Err(e) => {
-                eprintln!("viewmer: {}", e);
-                std::process::exit(1);
-            }
-        }
-        return;
-    }
     if !Path::new(&arg).is_file() {
         eprintln!("viewmer: no such file: {}", arg);
         std::process::exit(1);
     }
-    /* ===================== Run under the crash watcher ===================== */
-    if std::env::var_os(watch::WATCHED).is_none() {
-        let args: Vec<String> = std::env::args().collect();
-        watch::run(&args, reset_screen);
-    }
-
     /* ============================= Uncook the terminal ============================= */
     if let Err(e) = enable_raw_mode().and_then(|_| {
         execute!(
@@ -113,13 +81,10 @@ fn main() {
             Hide,
             Clear(ClearType::All),
             EnableMouseCapturePixels,
-            /* Keys like Shift-Enter and Ctrl-h arrive as themselves, for the editor in
-             * the notes panel and for bindings */
+            /* Keys like Ctrl-i and Tab, or Esc and Alt, arrive apart, for bindings */
             PushKeyboardEnhancementFlags(
                 KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-            ),
-            EnableBracketedPaste,
-            EnableFocusChange
+            )
         )
     }) {
         fail(&format!("Could not set up the terminal: {}", e));
@@ -128,7 +93,6 @@ fn main() {
     /* ========================== Cook the terminal on panic ========================= */
     let default_panic = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        watch::log(&format!("viewmer panicked: {}", info));
         restore_terminal();
         default_panic(info);
     }));
@@ -141,32 +105,11 @@ fn main() {
     terminal_graphics_test_support().unwrap_or_else(|e| fail(&e));
 
     /* ================================= Load config ================================= */
-    let mut key_matcher;
-    {
-        let mut config = config_load_or_create()
-            .unwrap_or_else(|e| fail(&format!("Could not load the config: {}", e)));
-        let Some(bindings) = config.bindings.take() else {
-            fail("The config has no [bindings]");
-        };
-        key_matcher = bindings;
-        CONFIG.get_or_init(|| config);
-    }
-    /* While the note has the keys, only the notes keys with Ctrl or Alt are taken from
-     * the editor */
-    let mut global_keys = Keybinds::new(
-        key_matcher
-            .as_slice()
-            .iter()
-            .filter(|b| {
-                b.action.is_pane()
-                    && b.seq
-                        .as_slice()
-                        .first()
-                        .is_some_and(|k| k.mods().intersects(Mods::CTRL | Mods::ALT))
-            })
-            .cloned()
-            .collect(),
-    );
+    let mut config = config_load_or_create()
+        .unwrap_or_else(|e| fail(&format!("Could not load the config: {}", e)));
+    /* The main loop keeps the keys, which change as sequences are typed */
+    let mut key_matcher = std::mem::take(&mut config.bindings);
+    CONFIG.get_or_init(|| config);
     load_panel_sizes();
     /* A broken theme falls back to the default colors and says so */
     let theme_problems = match config_folder() {
@@ -209,34 +152,24 @@ fn main() {
         mode: Mode::Normal,
         count: None,
         search: None,
-        message: recovered_message().or(reload_error).or_else(|| {
-            match theme_problems.as_slice() {
-                [] => None,
-                [one] => Some(format!("theme.toml: {}", one)),
-                [first, rest @ ..] => {
-                    Some(format!("theme.toml: {} (and {} more)", first, rest.len()))
-                }
+        message: reload_error.or_else(|| match theme_problems.as_slice() {
+            [] => None,
+            [one] => Some(format!("theme.toml: {}", one)),
+            [first, rest @ ..] => {
+                Some(format!("theme.toml: {} (and {} more)", first, rest.len()))
             }
         }),
         link: None,
         help: ui::help_lines(&help_entries(&key_matcher)),
         toc: Toc::default(),
         store: None,
-        jumps: Jumps::default(),
-        marks: BTreeMap::new(),
-        pending_mark: None,
-        ruler: None,
-        lines: Lines::new(&arg),
-        ruler_image: None,
         pointer: PointerShape::Default,
         save_due: None,
-        throttle: LastExecuted::default(),
+        inverse_toggled: None,
         fatal: None,
         shown: None,
-        notes: crate::notes::Notes::new(Path::new(&arg)),
         title: frame_title(None, None, &arg),
         message_shown: None,
-        offset_by_hand: false,
     };
 
     let mut current_mouse = MouseEvent {
@@ -291,7 +224,6 @@ fn main() {
                     if handle_input(
                         input,
                         &mut key_matcher,
-                        &mut global_keys,
                         &mut viewer,
                         &renderer,
                         &mut app,
@@ -301,24 +233,10 @@ fn main() {
                 }
                 Wake::Mouse(mouse) => {
                     current_mouse = mouse;
-                    if notes_mouse(&mut current_mouse, &mut viewer, &mut app) {
-                        current_mouse.kind = MouseEventKind::Moved;
-                    }
                     /* Each click counts, even with more of the mouse behind it */
                     clicked |= handle_pointer(&mut current_mouse, &mut viewer, &mut app);
                 }
                 Wake::Resize => resized = true,
-                Wake::Terminal => {
-                    if let Some(pane) = app.notes.terminal.as_mut() {
-                        if pane.take_output() {
-                            app.notes.pass_graphics();
-                        } else {
-                            /* The shell ended (`exit`): the panel closes */
-                            app.notes.ended();
-                            apply_layout(&mut viewer, &mut app);
-                        }
-                    }
-                }
                 Wake::Stop => break 'main,
                 Wake::Fatal(e) => {
                     app.fatal = Some(e);
@@ -335,11 +253,10 @@ fn main() {
             if let Ok(size) = window_size() {
                 *TERMINAL_SIZE.get().unwrap().write().unwrap() = size;
             }
-            apply_layout(&mut viewer, &mut app);
             viewer.refit();
-            app.toc.scroll_by(0, toc_visible(&ui::viewport()));
+            app.toc.scroll_by(0, toc_visible(&viewport()));
             if let Mode::Help { scroll } = &mut app.mode {
-                let max = help_max_scroll(app.help.len(), help_visible(&inner()));
+                let max = help_max_scroll(app.help.len(), help_visible(&viewport()));
                 *scroll = (*scroll).min(max);
             }
         }
@@ -369,8 +286,8 @@ fn main() {
             continue 'main;
         }
 
-        /* A program pouring out text in the notes terminal would otherwise have every
-         * read drawn, thousands of frames a second that kitty never shows */
+        /* A burst of wakes, such as pages arriving or the wheel spinning, would otherwise
+         * have every one drawn, more frames than kitty shows */
         if last_frame.elapsed() < FRAME_GAP {
             frame_due = Some(last_frame + FRAME_GAP);
             continue 'main;
@@ -395,8 +312,6 @@ fn main() {
         check_placements(&gr, displayed, &mut viewer, &mut app);
     }
 
-    /* The note is saved and the editor quits before anything else goes */
-    app.notes.close();
     if app.store.is_some() {
         app.save_due = Some((file_state(&viewer, &app), Instant::now()));
         save_state(&mut app);
@@ -412,53 +327,18 @@ fn main() {
     }
 }
 
-/* Gives the terminal back as it was. Errors are ignored: this also runs when the
- * terminal is gone, and from the panic hook. */
+/* Turns off what viewmer turned on and gives the terminal back as it was. Errors are
+ * ignored: this also runs when the terminal is gone, and from the panic hook. */
 fn restore_terminal() {
-    reset_screen();
-    let _ = disable_raw_mode();
-}
-
-/* Turns off what viewmer turned on in the terminal and leaves its screen; the crash
- * watcher does this too, for a viewer that couldn't */
-fn reset_screen() {
     let _ = execute!(
         io::stdout(),
         PopKeyboardEnhancementFlags,
-        DisableBracketedPaste,
-        DisableFocusChange,
         DisableMouseCapturePixels,
         FreeImages,
         LeaveAlternateScreen,
-        SetCursorStyle::DefaultUserShape,
         Show
     );
-}
-
-/* The note for `pdf`: the one named `name`, or else after the PDF's title or file name */
-fn note_for(pdf: &str, name: &str) -> Result<std::path::PathBuf, String> {
-    let mut config = config_load_or_create()?;
-    config.bindings = None;
-    CONFIG.get_or_init(|| config);
-    let title = mupdf::Document::open(pdf)
-        .ok()
-        .and_then(|d| d.metadata(mupdf::MetadataName::Title).ok())
-        .map(|t| t.trim().to_owned())
-        .filter(|t| real_title(t));
-    let name = Some(name).filter(|n| !n.trim().is_empty());
-    crate::notes::note_for(Path::new(pdf), title.as_deref(), name)
-}
-
-/* What the viewer says when the watcher started it again after a crash */
-fn recovered_message() -> Option<String> {
-    std::env::var_os(watch::RECOVERED)?;
-    let log = watch::crash_log()
-        .map(|f| f.display().to_string())
-        .unwrap_or_default();
-    Some(format!(
-        "Started again after a crash; what happened is in {}",
-        log
-    ))
+    let _ = disable_raw_mode();
 }
 
 /* Gives the terminal back and exits with `message` */
@@ -468,43 +348,20 @@ fn fail(message: &str) -> ! {
     std::process::exit(1);
 }
 
-/* A key, the wheel, a paste or focus moving; `true` to quit */
+/* A key or the wheel; `true` to quit */
 fn handle_input(
     input: InputEvent,
     key_matcher: &mut Keybinds<ConfigAction>,
-    global_keys: &mut Keybinds<ConfigAction>,
     viewer: &mut Viewer,
     renderer: &Renderer,
     app: &mut App,
 ) -> bool {
-    let notes_keys = app.notes.open && app.notes.focused;
     match input {
-        InputEvent::Key(key) if key.kind == KeyEventKind::Release => (),
-        InputEvent::Key(key) if notes_keys => {
-            handle_notes_key(key, global_keys, viewer, app);
-        }
-        InputEvent::Key(key) => {
-            if handle_key(key, key_matcher, viewer, renderer, app) {
-                return true;
-            }
-        }
-        InputEvent::MouseScroll(kind, mods, x, y) => {
-            if handle_mouse_scroll(kind, mods, (x, y), viewer, app) {
-                return true;
-            }
-        }
-        InputEvent::Paste(text) if notes_keys => {
-            if let Some(editor) = &mut app.notes.terminal {
-                editor.paste(&text);
-            }
-        }
-        InputEvent::Paste(_) => (),
-        /* Leaving the terminal window saves the note */
-        InputEvent::Focus(gained) => {
-            if let (true, Some(editor)) = (notes_keys, &mut app.notes.terminal) {
-                editor.focus(gained);
-            }
+        InputEvent::Key(key) if key.kind == KeyEventKind::Release => false,
+        InputEvent::Key(key) => handle_key(key, key_matcher, viewer, renderer, app),
+        InputEvent::MouseScroll(kind) => {
+            handle_mouse_scroll(kind, viewer, app);
+            false
         }
     }
-    false
 }

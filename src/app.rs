@@ -1,18 +1,13 @@
 /* What the main loop keeps besides the viewer, and the remembered position */
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::config::*;
 use crate::drivers::commands::PointerShape;
 use crate::globals::*;
 use crate::image::*;
 use crate::input::{reveal_section, show_current_match};
-use crate::jumps::{Jumps, Spot};
-use crate::notes::{EditorSize, Notes};
 use crate::outline::Toc;
-use crate::ruler::{Lines, Ruler};
 use crate::state::*;
 use crate::store::{FileState, Layout, Store};
 use crate::threads::renderer::{Renderer, RendererAction, RendererResult};
@@ -22,13 +17,6 @@ use crate::viewer::*;
 /* How long the view must stay put before its position is written: soon, so that
  * little is lost if the viewer is killed or crashes */
 pub const SAVE_DELAY: Duration = Duration::from_millis(300);
-
-/* When the slow toggles last ran, so that holding their key can't flood the renderer */
-#[derive(Default)]
-pub struct LastExecuted {
-    pub alpha: Option<Instant>,
-    pub inverse: Option<Instant>,
-}
 
 /* Everything the main loop keeps besides the viewer itself */
 pub struct App {
@@ -44,33 +32,21 @@ pub struct App {
     pub toc: Toc,
     /* Where this file's state is remembered; `None` when that's turned off */
     pub store: Option<Store>,
-    /* Where jumps started, for Ctrl-o and Ctrl-n */
-    pub jumps: Jumps,
-    pub marks: BTreeMap<char, Spot>,
-    /* `m` or a backtick was typed and waits for its letter */
-    pub pending_mark: Option<ConfigAction>,
-    /* The reading ruler when it's on, the text rows it steps through, and the image
-     * last sent for it */
-    pub ruler: Option<Ruler>,
-    pub lines: Lines,
-    pub ruler_image: Option<RulerPlacement>,
     /* The mouse pointer shape last sent to the terminal */
     pub pointer: PointerShape,
     /* The position waiting to be written, and when */
     pub save_due: Option<(FileState, Instant)>,
-    pub throttle: LastExecuted,
+    /* When dark pages were last toggled, so that holding the key can't flood the
+     * renderer */
+    pub inverse_toggled: Option<Instant>,
     /* Why the viewer has to stop: the terminal or a helper thread is gone */
     pub fatal: Option<String>,
     /* The images placed by the last frame; `None` forces placing them again */
     pub shown: Option<Shown>,
-    pub notes: Notes,
     /* The top edge of the frame: the PDF's title and author, or its file name */
     pub title: String,
     /* The message on show and since when, so that it goes after a while */
     pub message_shown: Option<(String, Instant)>,
-    /* The page offset was set with `:offset`, so the numbers printed on the pages
-     * don't change it */
-    pub offset_by_hand: bool,
 }
 
 /* How long a message stays in the status bar */
@@ -95,7 +71,7 @@ pub fn message_due(app: &mut App) -> Option<Instant> {
 
 /* Whether a title stored in a PDF is a real one, not what an export tool left there:
  * `Microsoft Word - draft.docx`, `untitled`, a file name */
-pub fn real_title(title: &str) -> bool {
+fn real_title(title: &str) -> bool {
     let lower = title.trim().to_lowercase();
     let file_like = [
         ".doc", ".docx", ".pdf", ".tex", ".indd", ".dvi", ".ps", ".odt", ".pages",
@@ -134,7 +110,6 @@ pub fn frame_title(title: Option<&str>, author: Option<&str>, file: &str) -> Str
 #[derive(Clone, Debug, PartialEq)]
 pub struct Shown {
     pub pages: Vec<PagePlacement>,
-    pub ruler: Option<RulerPlacement>,
     pub tints: Vec<Tint>,
 }
 
@@ -164,16 +139,14 @@ pub struct Changes {
     pub clear: bool,
     /* The page images to place */
     pub pages: Vec<PagePlacement>,
-    /* Place or hide the ruler */
-    pub ruler: bool,
     /* The tints to place, and the ones to take down */
     pub tints: Vec<Tint>,
     pub hide: Vec<usize>,
 }
 
 /* Everything is placed again when what's in view changes. A page kept ready that
- * arrives on its own changes nothing in view and is placed by itself, and the ruler
- * and the tints move by themselves. */
+ * arrives on its own changes nothing in view and is placed by itself, and the tints
+ * move by themselves. */
 pub fn changes(old: Option<&Shown>, new: &Shown) -> Changes {
     /* Only page images go when everything is placed again; tints that aren't wanted any
      * more are taken down either way */
@@ -195,7 +168,6 @@ pub fn changes(old: Option<&Shown>, new: &Shown) -> Changes {
                 .filter(|p| !old.pages.contains(p))
                 .cloned()
                 .collect(),
-            ruler: old.ruler != new.ruler,
             tints: new
                 .tints
                 .iter()
@@ -207,7 +179,6 @@ pub fn changes(old: Option<&Shown>, new: &Shown) -> Changes {
         _ => Changes {
             clear: true,
             pages: new.pages.clone(),
-            ruler: true,
             tints: new.tints.clone(),
             hide,
         },
@@ -230,8 +201,7 @@ pub fn throttle(last: &mut Option<Instant>) -> bool {
     true
 }
 
-/* Opens the remembered state of `file` and goes back to it: the place, the marks and
- * the note. A file that moved since gets the link in its note moved along. */
+/* Opens the remembered state of `file` and goes back to it */
 pub fn open_store(file: &str, id: Option<String>, viewer: &mut Viewer, app: &mut App) {
     if !CONFIG.get().unwrap().viewer.remember_position {
         return;
@@ -241,70 +211,13 @@ pub fn open_store(file: &str, id: Option<String>, viewer: &mut Viewer, app: &mut
     };
     let mut store = Store::new(dir, id, Path::new(file));
     if let Some(state) = store.load() {
-        let _ = viewer.set_page_offset(state.page_offset);
-        app.offset_by_hand = state.offset_by_hand;
         viewer.restore(state.page, state.within, state.zoom);
-        app.marks = state
-            .marks
-            .iter()
-            .filter_map(|(k, spot)| Some((mark_letter(k)?, *spot)))
-            .collect();
-        app.notes.remembered = state.note.as_deref().map(PathBuf::from);
-        if let (Some(old), Some(note)) = (&state.path, &app.notes.remembered) {
-            if old != store.path() {
-                move_note_link(note, Path::new(old), Path::new(store.path()));
-            }
+        viewer.set_left(state.layout.left);
+        if state.layout.contents {
+            app.mode = Mode::Toc;
         }
-        restore_layout(&state.layout, viewer, app);
     }
     app.store = Some(store);
-}
-
-/* Lays the window out as it was: the note open first, since the zoom is kept relative
- * to the width the pages had beside it */
-fn restore_layout(layout: &Layout, viewer: &mut Viewer, app: &mut App) {
-    if layout.notes {
-        if app.notes.focus(editor_size()).is_ok() && !layout.notes_focused {
-            app.notes.unfocus();
-        }
-        apply_layout(viewer, app);
-    }
-    viewer.set_left(layout.left);
-    if layout.contents {
-        app.mode = Mode::Toc;
-    }
-    app.ruler = layout.ruler.map(|[page, row]| Ruler { page, row });
-}
-
-/* The layout to remember */
-fn layout(viewer: &Viewer, app: &App) -> Layout {
-    Layout {
-        notes: app.notes.open,
-        notes_focused: app.notes.open && app.notes.focused,
-        contents: app.mode == Mode::Toc,
-        ruler: app.ruler.map(|r| [r.page, r.row]),
-        /* Rounded, so that tiny moves don't count as changes */
-        left: ((viewer.left() * 1000.0).round() / 1000.0).abs(),
-    }
-}
-
-/* Points the note's link to the PDF at its new place */
-fn move_note_link(note: &Path, old: &Path, new: &Path) {
-    let Ok(text) = std::fs::read_to_string(note) else {
-        return;
-    };
-    if let Some(moved) = crate::notes::note::move_link(&text, old, new) {
-        let _ = std::fs::write(note, moved);
-    }
-}
-
-/* A mark's letter from its name in the state file */
-pub fn mark_letter(name: &str) -> Option<char> {
-    let mut chars = name.chars();
-    match (chars.next(), chars.next()) {
-        (Some(c), None) if c.is_ascii_lowercase() => Some(c),
-        _ => None,
-    }
 }
 
 pub fn file_state(viewer: &Viewer, app: &App) -> FileState {
@@ -313,15 +226,11 @@ pub fn file_state(viewer: &Viewer, app: &App) -> FileState {
         page,
         within,
         zoom,
-        page_offset: viewer.page_offset(),
-        offset_by_hand: app.offset_by_hand,
-        marks: app.marks.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
-        note: app
-            .notes
-            .remembered
-            .as_ref()
-            .map(|p| p.to_string_lossy().into_owned()),
-        layout: layout(viewer, app),
+        layout: Layout {
+            contents: app.mode == Mode::Toc,
+            /* Rounded, so that tiny moves don't count as changes */
+            left: ((viewer.left() * 1000.0).round() / 1000.0).abs(),
+        },
         ..FileState::default()
     }
 }
@@ -348,49 +257,20 @@ pub fn save_state(app: &mut App) {
     }
 }
 
-/* The ruler's band in viewport pixels, when its page is on screen */
-pub fn ruler_band(app: &mut App, viewer: &Viewer) -> Option<(f64, f64, f64, f64)> {
-    /* A little air above and below the letters */
-    const PAD: f64 = 2.0;
-    let r = app.ruler?;
-    let rect = viewer.page_rect(r.page)?;
-    let row = *app.lines.rows(r.page).get(r.row)?;
-    let scale = viewer.pixels_per_unit() as f64;
-    Some((
-        rect.x as f64,
-        rect.y as f64 + row.top as f64 * scale - PAD,
-        rect.width as f64,
-        (row.bottom - row.top) as f64 * scale + 2.0 * PAD,
-    ))
-}
-
 /* Where the panel sizes are kept between runs */
 fn panel_sizes_file() -> Option<PathBuf> {
     Some(Store::default_dir()?.join("panels.toml"))
 }
 
-/* Reads the panels' widths from last time; the notes panel starts from the config's
- * width when it was never resized */
+/* Reads the contents panel's width from last time */
 pub fn load_panel_sizes() {
-    ui::set_notes_percent(CONFIG.get().unwrap().notes.width);
-    let Some(text) = panel_sizes_file().and_then(|f| std::fs::read_to_string(f).ok())
-    else {
-        return;
-    };
-    let Ok(table) = text.parse::<toml::Table>() else {
-        return;
-    };
-    let width = |key: &str| {
-        table
-            .get(key)
-            .and_then(|v| v.as_integer())
-            .map(|w| w.clamp(0, 100) as u16)
-    };
-    if let Some(width) = width("contents_width") {
+    let width = panel_sizes_file()
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|text| text.parse::<toml::Table>().ok())
+        .and_then(|table| table.get("contents_width")?.as_integer())
+        .map(|w| w.clamp(0, 100) as u16);
+    if let Some(width) = width {
         ui::set_toc_percent(width);
-    }
-    if let Some(width) = width("notes_width") {
-        ui::set_notes_percent(width);
     }
 }
 
@@ -401,102 +281,33 @@ pub fn save_panel_sizes() {
     if let Some(dir) = file.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(
-        file,
-        format!(
-            "contents_width = {}\nnotes_width = {}\n",
-            ui::toc_percent(),
-            ui::notes_percent()
-        ),
-    );
-}
-
-/* The size of the editor in the notes panel: the panel inside its border */
-pub fn editor_size() -> EditorSize {
-    let window = ui::window();
-    let (_, _, cols, rows) = ui::notes_rect(&window, ui::notes_percent());
-    EditorSize {
-        cols,
-        rows,
-        pixels: (
-            (cols as f64 * window.pxpercol) as u16,
-            (rows as f64 * window.pxperrow) as u16,
-        ),
-    }
-}
-
-/* Lays the pages out beside the notes panel while it's open, and over the whole width
- * when it isn't, keeping the zoom and the place; the editor follows the panel's size */
-pub fn apply_layout(viewer: &mut Viewer, app: &mut App) {
-    let cols = if app.notes.open {
-        ui::notes_rect(&ui::window(), ui::notes_percent()).2
-    } else {
-        0
-    };
-    let before = ui::viewport();
-    ui::set_notes_cols(cols);
-    if ui::viewport() != before {
-        viewer.refit();
-    }
-    let size = editor_size();
-    if let Some(terminal) = &mut app.notes.terminal {
-        if terminal.size() != (size.cols, size.rows) {
-            /* The program draws its images again at the new size */
-            crate::notes::send_to_kitty(&crate::notes::graphics::clear(false));
-        }
-        terminal.resize(size.cols, size.rows, size.pixels);
-    }
-}
-
-/* Numbers the pages as printed on them, unless the PDF says how it numbers them or the
- * offset was set by hand */
-pub fn apply_printed_numbers(offset: Option<i32>, viewer: &mut Viewer, app: &mut App) {
-    let Some(offset) = offset else { return };
-    if app.offset_by_hand || !viewer.has_plain_labels() || offset == viewer.page_offset()
-    {
-        return;
-    }
-    if viewer.set_page_offset(offset).is_ok() && offset > 0 {
-        app.message = Some(format!(
-            "Numbered as printed: page #{} is page 1",
-            offset + 1
-        ));
-    }
+    let _ = std::fs::write(file, format!("contents_width = {}\n", ui::toc_percent()));
 }
 
 /* Takes in what the renderer sends: a (re)loaded document, a page image or search
- * results. `true` means the page images still queued are for an older version and
- * should be dropped. */
+ * results */
 pub fn handle_result(
     result: RendererResult,
     file: &str,
     viewer: &mut Viewer,
     renderer: &Renderer,
     app: &mut App,
-) -> bool {
+) {
     match result {
         RendererResult::PageMetadata {
             max_page_width,
             cumulative_heights,
             widths,
             links,
-            labels,
             outline,
             id,
             title,
             author,
         } => {
             app.title = frame_title(title.as_deref(), author.as_deref(), file);
-            app.notes.title = title.filter(|t| real_title(t));
             let uninit = viewer.is_uninit();
 
-            viewer.update_metadata(
-                max_page_width,
-                &cumulative_heights,
-                &widths,
-                &links,
-                labels,
-            );
+            viewer.update_metadata(max_page_width, &cumulative_heights, &widths, &links);
             viewer.invalidate_registry();
             viewer.center_viewer();
             if uninit {
@@ -505,14 +316,6 @@ pub fn handle_result(
             } else if let Some(store) = app.store.as_mut() {
                 store.set_id(id);
             }
-            /* The text may have moved; keep the ruler only where it fits */
-            app.lines.reset();
-            if let Some(r) = app.ruler {
-                if r.page >= viewer.pages() || r.row >= app.lines.rows(r.page).len() {
-                    app.ruler = None;
-                }
-            }
-
             app.toc = Toc::new(outline);
             if app.mode == Mode::Toc {
                 reveal_section(app, viewer);
@@ -525,16 +328,8 @@ pub fn handle_result(
                 let action = RendererAction::Search(search.needle.clone());
                 tell_renderer(renderer, app, action);
             }
-            true
         }
-        RendererResult::Image { page, data } => {
-            viewer.handle_image(page, data);
-            false
-        }
-        RendererResult::PrintedNumbers { offset } => {
-            apply_printed_numbers(offset, viewer, app);
-            false
-        }
+        RendererResult::Image { page, data } => viewer.handle_image(page, data),
         RendererResult::SearchProgress {
             generation,
             needle,
@@ -543,11 +338,11 @@ pub fn handle_result(
             total,
         } => {
             let Some(search) = app.search.as_mut().filter(|s| s.needle == needle) else {
-                return false;
+                return;
             };
             let pages: Vec<usize> = matches.iter().map(|m| m.page).collect();
             if !search.add(generation, matches) {
-                return false;
+                return;
             }
             search.searched = (searched, total);
             /* Pages with new matches are drawn again with them highlighted */
@@ -557,7 +352,6 @@ pub fn handle_result(
                 let follow = search.follow;
                 show_current_match(app, viewer, renderer, follow);
             }
-            false
         }
     }
 }
@@ -581,22 +375,9 @@ mod tests {
         }
     }
 
-    fn ruler(row: usize) -> RulerPlacement {
-        RulerPlacement {
-            col: 2,
-            row,
-            cols: 10,
-            rows: 1,
-            width: 100,
-            height: 20,
-            band: (0, 2, 100, 16),
-        }
-    }
-
-    fn shown(pages: Vec<PagePlacement>, ruler: Option<RulerPlacement>) -> Shown {
+    fn shown(pages: Vec<PagePlacement>) -> Shown {
         Shown {
             pages,
-            ruler,
             tints: Vec::new(),
         }
     }
@@ -633,22 +414,21 @@ mod tests {
 
     #[test]
     fn the_first_frame_places_everything() {
-        let new = shown(vec![page(0, 1, Some(2)), page(1, 2, None)], Some(ruler(3)));
+        let new = shown(vec![page(0, 1, Some(2)), page(1, 2, None)]);
         let c = changes(None, &new);
-        assert!(c.clear && c.ruler);
+        assert!(c.clear);
         assert_eq!(c.pages, new.pages);
     }
 
     #[test]
     fn the_same_view_places_nothing() {
-        let old = shown(vec![page(0, 1, Some(2)), page(1, 2, None)], Some(ruler(3)));
+        let old = shown(vec![page(0, 1, Some(2)), page(1, 2, None)]);
         let c = changes(Some(&old), &old.clone());
         assert_eq!(
             c,
             Changes {
                 clear: false,
                 pages: vec![],
-                ruler: false,
                 tints: vec![],
                 hide: vec![],
             }
@@ -657,30 +437,19 @@ mod tests {
 
     #[test]
     fn a_page_kept_ready_is_placed_by_itself() {
-        let old = shown(vec![page(0, 1, Some(2))], None);
-        let new = shown(vec![page(0, 1, Some(2)), page(1, 2, None)], None);
+        let old = shown(vec![page(0, 1, Some(2))]);
+        let new = shown(vec![page(0, 1, Some(2)), page(1, 2, None)]);
         let c = changes(Some(&old), &new);
-        assert!(!c.clear && !c.ruler);
+        assert!(!c.clear);
         assert_eq!(c.pages, vec![page(1, 2, None)]);
     }
 
     #[test]
-    fn moving_the_ruler_leaves_the_pages() {
-        let old = shown(vec![page(0, 1, Some(2))], Some(ruler(3)));
-        let new = shown(vec![page(0, 1, Some(2))], Some(ruler(4)));
-        let c = changes(Some(&old), &new);
-        assert!(!c.clear && c.ruler);
-        assert!(c.pages.is_empty());
-        let off = changes(Some(&old), &shown(vec![page(0, 1, Some(2))], None));
-        assert!(!off.clear && off.ruler);
-    }
-
-    #[test]
     fn scrolling_or_a_new_image_in_view_places_everything_again() {
-        let old = shown(vec![page(0, 1, Some(2)), page(1, 2, None)], None);
-        let scrolled = shown(vec![page(0, 1, Some(1)), page(1, 2, None)], None);
+        let old = shown(vec![page(0, 1, Some(2)), page(1, 2, None)]);
+        let scrolled = shown(vec![page(0, 1, Some(1)), page(1, 2, None)]);
         assert!(changes(Some(&old), &scrolled).clear);
-        let rendered = shown(vec![page(0, 3, Some(2)), page(1, 2, None)], None);
+        let rendered = shown(vec![page(0, 3, Some(2)), page(1, 2, None)]);
         let c = changes(Some(&old), &rendered);
         assert!(c.clear);
         assert_eq!(c.pages.len(), 2);
@@ -689,16 +458,16 @@ mod tests {
     #[test]
     fn tints_move_appear_and_go_by_themselves() {
         let pages = vec![page(0, 1, Some(2))];
-        let mut old = shown(pages.clone(), None);
+        let mut old = shown(pages.clone());
         old.tints = vec![tint(10, 2), tint(11, 4)];
-        let mut new = shown(pages.clone(), None);
+        let mut new = shown(pages.clone());
         new.tints = vec![tint(10, 2), tint(11, 5)];
         let c = changes(Some(&old), &new);
         assert!(!c.clear && c.pages.is_empty());
         assert_eq!(c.tints, vec![tint(11, 5)]);
         assert!(c.hide.is_empty());
 
-        let closed = changes(Some(&old), &shown(pages, None));
+        let closed = changes(Some(&old), &shown(pages));
         assert!(!closed.clear && closed.tints.is_empty());
         assert_eq!(closed.hide, vec![10, 11]);
     }

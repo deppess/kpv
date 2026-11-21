@@ -55,7 +55,7 @@ impl Image {
         let (width, height) = (pixmap.width() as usize, pixmap.height() as usize);
         let data = pixmap.samples();
         let id = ID.fetch_add(1, Ordering::AcqRel);
-        terminal_graphics_transfer_bitmap(id, width, height, data, true)?;
+        terminal_graphics_transfer_bitmap(id, width, height, data)?;
         Ok(Self {
             id,
             dimensions: (
@@ -244,72 +244,6 @@ pub fn placement(
     })
 }
 
-/* The reading ruler: a band laid over the page, shipped as an image of whole cells
- * that is transparent around the band, so kitty scales it like the pages */
-#[derive(Clone, Debug, PartialEq)]
-pub struct RulerPlacement {
-    /* 1-indexed cell of the top-left corner, and the size in cells */
-    pub col: usize,
-    pub row: usize,
-    pub cols: usize,
-    pub rows: usize,
-    /* Bitmap size, and the band inside it, in pixels */
-    pub width: usize,
-    pub height: usize,
-    pub band: (usize, usize, usize, usize),
-}
-
-/* `band` is (x, y, width, height) in viewport pixels; the part inside the viewport is
- * shown */
-pub fn ruler_placement(
-    band: (f64, f64, f64, f64),
-    vp: &Viewport,
-) -> Option<RulerPlacement> {
-    let (x, y, w, h) = band;
-    let x0 = x.max(0.0);
-    let x1 = (x + w).min(vp.width() as f64);
-    let y0 = y.max(0.0);
-    let y1 = (y + h).min(vp.height() as f64);
-    if x1 - x0 < 1.0 || y1 - y0 < 1.0 {
-        return None;
-    }
-    let col0 = (x0 / vp.pxpercol).floor();
-    let col1 = (x1 / vp.pxpercol).ceil().min(vp.cols as f64);
-    let row0 = (y0 / vp.pxperrow).floor();
-    let row1 = (y1 / vp.pxperrow).ceil().min(vp.rows as f64);
-    if col1 <= col0 || row1 <= row0 {
-        return None;
-    }
-    let width = ((col1 - col0) * vp.pxpercol).round() as usize;
-    let height = ((row1 - row0) * vp.pxperrow).round() as usize;
-    let bx = ((x0 - col0 * vp.pxpercol).round() as usize).min(width);
-    let by = ((y0 - row0 * vp.pxperrow).round() as usize).min(height);
-    let bw = ((x1 - x0).round() as usize).min(width - bx);
-    let bh = ((y1 - y0).round() as usize).min(height - by);
-    Some(RulerPlacement {
-        col: 1 + vp.col as usize + col0 as usize,
-        row: 1 + vp.row as usize + row0 as usize,
-        cols: (col1 - col0) as usize,
-        rows: (row1 - row0) as usize,
-        width,
-        height,
-        band: (bx, by, bw, bh),
-    })
-}
-
-/* RGBA pixels of the ruler image: `color` inside the band, clear around it */
-pub fn ruler_bitmap(p: &RulerPlacement, color: [u8; 4]) -> Vec<u8> {
-    let mut data = vec![0u8; p.width * p.height * 4];
-    let (bx, by, bw, bh) = p.band;
-    for y in by..by + bh {
-        for x in bx..bx + bw {
-            let at = (y * p.width + x) * 4;
-            data[at..at + 4].copy_from_slice(&color);
-        }
-    }
-    data
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,27 +285,6 @@ mod tests {
         recolor_pixels(&mut red, 4, bg, fg);
         assert!(red[0] > red[1] + 100 && red[0] > red[2] + 100, "{:?}", red);
         assert_eq!(red[3], 77);
-    }
-
-    #[test]
-    fn ruler_band_sits_inside_whole_cells() {
-        /* A band from x 15 to 215, y 45 to 63: cells 1..22 and rows 2..4 */
-        let p = ruler_placement((15.0, 45.0, 200.0, 18.0), &vp()).unwrap();
-        assert_eq!((p.col, p.row, p.cols, p.rows), (3, 4, 21, 2));
-        assert_eq!((p.width, p.height), (210, 40));
-        assert_eq!(p.band, (5, 5, 200, 18));
-        let data = ruler_bitmap(&p, [1, 2, 3, 4]);
-        assert_eq!(data.len(), 210 * 40 * 4);
-        assert_eq!(&data[(5 * 210 + 5) * 4..][..4], &[1, 2, 3, 4]);
-        assert_eq!(&data[..4], &[0, 0, 0, 0]);
-    }
-
-    #[test]
-    fn ruler_band_outside_the_viewport_is_cut() {
-        let p = ruler_placement((-20.0, -5.0, 100.0, 15.0), &vp()).unwrap();
-        assert_eq!((p.col, p.row), (2, 2));
-        assert_eq!(p.band, (0, 0, 80, 10));
-        assert!(ruler_placement((0.0, 900.0, 100.0, 15.0), &vp()).is_none());
     }
 
     #[test]

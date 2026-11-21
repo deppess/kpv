@@ -9,8 +9,6 @@ use mupdf::{link::LinkDestination, DestinationKind, Link};
 use crate::{
     globals::{CONFIG, RENDER_SCALE},
     image::{covers, Image, PagePlacement, Region},
-    jumps::Spot,
-    labels,
     threads::renderer::*,
     ui::viewport,
 };
@@ -65,11 +63,6 @@ pub struct Viewer {
     cumulative_heights: Vec<f32>,
     widths: Vec<f32>,
     links: Vec<Vec<Link>>,
-    /* The page labels in the PDF, and the ones shown: those, or for a PDF without
-     * any, the ones `page_offset` gives */
-    pdf_labels: Vec<String>,
-    labels: Vec<String>,
-    page_offset: i32,
 
     pub images: HashMap<usize, Arc<RwLock<Image>>>,
     /* Coarse whole pages kept under a sharp part, so that past its edge the page shows
@@ -99,9 +92,6 @@ impl Viewer {
             cumulative_heights: Vec::new(),
             widths: Vec::new(),
             links: Vec::new(),
-            pdf_labels: Vec::new(),
-            labels: Vec::new(),
-            page_offset: 0,
             images: HashMap::new(),
             under: HashMap::new(),
             invalidated: HashSet::new(),
@@ -123,42 +113,11 @@ impl Viewer {
         cumulative_heights: &[f32],
         widths: &[f32],
         links: &[Vec<Link>],
-        labels: Vec<String>,
     ) {
         self.max_width = max_width;
         self.cumulative_heights = cumulative_heights.to_owned();
         self.widths = widths.to_owned();
         self.links = links.to_owned();
-        self.pdf_labels = labels;
-        self.apply_labels();
-    }
-
-    fn apply_labels(&mut self) {
-        self.labels = if self.page_offset != 0 && labels::is_plain(&self.pdf_labels) {
-            labels::with_offset(self.pdf_labels.len(), self.page_offset)
-        } else {
-            self.pdf_labels.clone()
-        };
-    }
-
-    /* Numbers a scan whose printed page 1 is `offset` pages into the file. A PDF with
-     * its own page labels keeps them. */
-    pub fn set_page_offset(&mut self, offset: i32) -> Result<(), String> {
-        if offset != 0 && !labels::is_plain(&self.pdf_labels) {
-            return Err("This PDF has its own page numbers".to_owned());
-        }
-        self.page_offset = offset;
-        self.apply_labels();
-        Ok(())
-    }
-
-    pub fn page_offset(&self) -> i32 {
-        self.page_offset
-    }
-
-    /* The PDF doesn't say how its pages are numbered */
-    pub fn has_plain_labels(&self) -> bool {
-        labels::is_plain(&self.pdf_labels)
     }
 
     fn page_top(&self, page: usize) -> f32 {
@@ -180,14 +139,6 @@ impl Viewer {
         let height = self.page_height(page).unwrap_or(1.0).max(1.0);
         let within = ((self.offset.1 - self.page_top(page)) / height).clamp(0.0, 1.0);
         (page, within, self.scale / self.fit_scale)
-    }
-
-    /* Where `page` is drawn, in viewport pixels, when it's on screen */
-    pub fn page_rect(&self, page: usize) -> Option<DisplayRect> {
-        self.calculate_display_bounds()
-            .into_iter()
-            .find(|(p, _)| *p == page)
-            .map(|(_, rect)| rect)
     }
 
     /* Sets the zoom relative to fitting the page width, keeping the spot at the top of
@@ -217,34 +168,10 @@ impl Viewer {
         self.scroll((0.0, amount));
     }
 
-    /* Viewport pixels per page unit */
-    pub fn pixels_per_unit(&self) -> f32 {
-        self.scale
-    }
-
     /* The scale pages are rendered at: one image pixel to a screen pixel at this zoom,
      * times the `resolution` setting */
     pub fn render_scale(&self) -> f32 {
         self.scale * CONFIG.get().unwrap().viewer.resolution
-    }
-
-    /* The page at the viewport's top edge and the spot on it there */
-    pub fn top_of_view(&self) -> (usize, f32) {
-        if self.cumulative_heights.is_empty() {
-            return (0, 0.0);
-        }
-        let page = self.page_first.min(self.pages() - 1);
-        (page, self.offset.1 - self.page_top(page))
-    }
-
-    pub fn spot(&self) -> Spot {
-        let (page, within, _) = self.position();
-        Spot { page, within }
-    }
-
-    /* Goes to a `spot()`, keeping the zoom */
-    pub fn go_to_spot(&mut self, spot: Spot) {
-        self.restore(spot.page, spot.within, self.scale / self.fit_scale);
     }
 
     /* Goes back to a `position()` */
@@ -262,22 +189,9 @@ impl Viewer {
         self.bound_viewer();
     }
 
-    /* The printed label of `page` */
-    pub fn page_label(&self, page: usize) -> String {
-        self.labels
-            .get(page)
-            .cloned()
-            .unwrap_or_else(|| (page + 1).to_string())
-    }
-
-    /* The page printed as `label` */
-    pub fn find_label(&self, label: &str) -> Option<usize> {
-        labels::find(&self.labels, label)
-    }
-
-    /* `xiv (14/412)` or `45/412` for the status bar */
+    /* `45/412` for the status bar */
     pub fn page_status(&self) -> String {
-        labels::status(&self.labels, self.page_view, self.pages())
+        format!("{}/{}", self.page_view + 1, self.pages())
     }
 
     /* The images of `pages` are drawn again */
@@ -476,30 +390,17 @@ impl Viewer {
         self.offset.0 = viewport().width() * 0.5 - self.max_width * self.scale * 0.5;
     }
 
-    pub fn page_height(&self, page: usize) -> Result<f32, String> {
-        let page_prev_height = if page > 0 {
-            *self.cumulative_heights.get(page - 1).unwrap_or(&0.0f32)
-        } else {
-            0.0f32
-        };
-
-        let page_height = *self.cumulative_heights.get(page).ok_or(format!(
-            "Wrong page index provided when retrieving page height, index: {}",
-            page
-        ))? - page_prev_height;
-
-        Ok(page_height)
+    /* A page's height with the gap after it, in page units */
+    pub fn page_height(&self, page: usize) -> Option<f32> {
+        Some(self.cumulative_heights.get(page)? - self.page_top(page))
     }
 
-    pub fn page_width(&self, page: usize) -> Result<f32, String> {
-        self.widths
-            .get(page)
-            .ok_or(format!("Could not get page {} width", page))
-            .copied()
+    pub fn page_width(&self, page: usize) -> Option<f32> {
+        self.widths.get(page).copied()
     }
 
     fn calculate_display_bounds(&self) -> Vec<(usize, DisplayRect)> {
-        /* Calculated bounds to display the pages in the temrinal */
+        /* Where the pages in view are drawn */
         let mut bounds = Vec::new();
         /* Current viewport height */
         let terminal_height = viewport().height();
@@ -524,7 +425,7 @@ impl Viewer {
 
         /* Cumulative displayed page height */
         while displayed_offset < terminal_height && page_index < pages_num {
-            let (Ok(height), Ok(width)) =
+            let (Some(height), Some(width)) =
                 (self.page_height(page_index), self.page_width(page_index))
             else {
                 break;
@@ -582,7 +483,7 @@ impl Viewer {
         }
         if link.uri.starts_with('#') {
             let page = link.dest.as_ref().map(|d| d.loc.page_number).unwrap_or(0);
-            Some(format!("→ page {}", self.page_label(page as usize)))
+            Some(format!("→ page {}", page + 1))
         } else {
             Some(format!("→ {}", link.uri))
         }

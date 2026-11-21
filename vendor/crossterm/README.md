@@ -9,5 +9,5 @@ Taken from https://github.com/monoamine11231/crossterm-apc at commit
 `Ord` on the event types and makes `document-features` optional. Examples and
 dev-dependencies are left out, and one unused-parentheses warning is fixed. viewmer runs
 on Unix only, so the Windows code goes, and so do the features it doesn't use (`serde`,
-`osc52`, `event-stream`, `use-dev-tty`, `document-features`). MIT, see
-[LICENSE](LICENSE).
+`osc52`, `event-stream`, `use-dev-tty`, `document-features`, `bracketed-paste`,
+`derive-more`). MIT, see [LICENSE](LICENSE).

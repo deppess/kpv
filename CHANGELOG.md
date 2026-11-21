@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+viewmer is now the PDF viewer alone.
+
+### Removed
+
+- The notes terminal, with `pdfnote`, page tags and the `[notes]` settings.
+- The reading ruler, marks and the jump list.
+- Printed page numbers and `:offset`: pages go by their place in the file, and `:45` is the 45th page.
+- The crash watcher; closing the window, `kill` and interrupts still quit as `q` does, saving first.
+- Transparent pages (`Ctrl-a`).
+
+Configs that bind the removed actions need those keys taken out.
+
+### Smaller
+
+- MuPDF is built without its e-book and Office engine, document export, barcodes, Brotli and spot colors, which a PDF viewer doesn't use: the binary goes from 7.8 MB to 5.4 MB, with pages drawn as before. This comes from `.cargo/config.toml`, so install from a checkout.
+
 ## 1.0.0 - 2026-11-19
 
 The first release of viewmer, forked from MeowPDF 1.2.2, whose history is in [its repository](https://github.com/monoamine11231/MeowPDF/blob/main/CHANGELOG.md).

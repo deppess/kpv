@@ -144,19 +144,10 @@ pub fn edit_prompt(text: &mut String, key: KeyEvent) -> PromptKey {
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Empty,
-    /* 1-indexed position in the file, from `:#12` */
+    /* 1-indexed position in the file, from `:12` or `:#12` */
     Page(usize),
-    /* A printed page label such as `45` or `xiv` */
-    Goto(String),
     Quit,
     ClearSearch,
-    /* `:offset 12`, or `:offset` alone to show it */
-    Offset(Option<i32>),
-    /* Number the pages as printed on them again, rather than by `:offset` */
-    OffsetAuto,
-    Marks,
-    /* `:delm ab` deletes marks a and b, `:delm!` all of them */
-    DeleteMarks(Option<String>),
     Unknown(String),
 }
 
@@ -166,26 +157,9 @@ pub fn parse_command(text: &str) -> Command {
         "" => Command::Empty,
         "q" | "q!" | "quit" => Command::Quit,
         "noh" | "nohl" | "nohlsearch" => Command::ClearSearch,
-        "offset" => Command::Offset(None),
-        "offset auto" => Command::OffsetAuto,
-        "marks" => Command::Marks,
-        "delm!" | "delmarks!" => Command::DeleteMarks(None),
-        _ if text.starts_with("delm ") || text.starts_with("delmarks ") => {
-            let letters = text.split_once(' ').map(|(_, l)| l).unwrap_or("");
-            Command::DeleteMarks(Some(letters.split_whitespace().collect()))
-        }
-        _ if text.starts_with("offset ") => {
-            match text["offset ".len()..].trim().parse() {
-                Ok(offset) => Command::Offset(Some(offset)),
-                Err(_) => Command::Unknown(text.to_owned()),
-            }
-        }
-        _ => match text.strip_prefix('#') {
-            Some(number) => match number.trim().parse::<usize>() {
-                Ok(page) if page > 0 => Command::Page(page),
-                _ => Command::Unknown(text.to_owned()),
-            },
-            None => Command::Goto(text.to_owned()),
+        _ => match text.trim_start_matches('#').trim().parse::<usize>() {
+            Ok(page) if page > 0 => Command::Page(page),
+            _ => Command::Unknown(text.to_owned()),
         },
     }
 }
@@ -224,7 +198,7 @@ type Group = (
     &'static [(&'static str, &'static str)],
 );
 
-const GROUPS: [Group; 9] = [
+const GROUPS: [Group; 7] = [
     (
         "Moving",
         &[
@@ -240,16 +214,6 @@ const GROUPS: [Group; 9] = [
             ConfigAction::JumpLastPage,
         ],
         &[("1-9", "A count first: 5j, 12G, 3 Ctrl+f")],
-    ),
-    (
-        "Jumps and marks",
-        &[
-            ConfigAction::JumpBack,
-            ConfigAction::JumpForward,
-            ConfigAction::SetMark,
-            ConfigAction::GoToMark,
-        ],
-        &[("`` or ''", "Back to where the last jump started")],
     ),
     (
         "Search",
@@ -269,9 +233,7 @@ const GROUPS: [Group; 9] = [
             ConfigAction::FitWidth,
             ConfigAction::FitPage,
             ConfigAction::CenterViewer,
-            ConfigAction::ToggleRuler,
             ConfigAction::ToggleInverse,
-            ConfigAction::ToggleAlpha,
         ],
         &[],
     ),
@@ -290,34 +252,10 @@ const GROUPS: [Group; 9] = [
         ],
     ),
     (
-        "Notes",
-        &[
-            ConfigAction::ToggleNote,
-            ConfigAction::FocusPdf,
-            ConfigAction::WidenNote,
-            ConfigAction::NarrowNote,
-            ConfigAction::TagPage,
-            ConfigAction::GoToTag,
-        ],
-        &[
-            ("Ctrl+click", "On a page tag in the note: go to the page"),
-            (
-                "pdfnote",
-                "In the terminal: the note named after the PDF, from the template",
-            ),
-            ("pdfnote x", "In the terminal: the note named x"),
-        ],
-    ),
-    (
         "Commands",
         &[ConfigAction::CommandLine],
         &[
-            (":45", "The page printed as 45"),
-            (":#45", "The 45th page of the file"),
-            (":offset 12", "Make the 13th page printed page 1"),
-            (":offset auto", "Number pages as printed on them again"),
-            (":marks", "List the marks"),
-            (":delm a", "Delete mark a (:delm! all)"),
+            (":45", "The 45th page"),
             (":noh", "Clear the search"),
             (":q", "Quit"),
         ],
@@ -399,8 +337,8 @@ mod tests {
 
     #[test]
     fn commands_parse() {
-        assert_eq!(parse_command(" 42 "), Command::Goto("42".to_owned()));
-        assert_eq!(parse_command("xiv"), Command::Goto("xiv".to_owned()));
+        assert_eq!(parse_command(" 42 "), Command::Page(42));
+        assert_eq!(parse_command("xiv"), Command::Unknown("xiv".to_owned()));
         assert_eq!(parse_command("#42"), Command::Page(42));
         assert_eq!(parse_command("# 7"), Command::Page(7));
         assert_eq!(parse_command("#0"), Command::Unknown("#0".to_owned()));
@@ -408,20 +346,6 @@ mod tests {
         assert_eq!(parse_command("q"), Command::Quit);
         assert_eq!(parse_command("noh"), Command::ClearSearch);
         assert_eq!(parse_command(""), Command::Empty);
-        assert_eq!(parse_command("offset 12"), Command::Offset(Some(12)));
-        assert_eq!(parse_command("offset -2"), Command::Offset(Some(-2)));
-        assert_eq!(parse_command("offset"), Command::Offset(None));
-        assert_eq!(parse_command("offset auto"), Command::OffsetAuto);
-        assert_eq!(parse_command("marks"), Command::Marks);
-        assert_eq!(parse_command("delm!"), Command::DeleteMarks(None));
-        assert_eq!(
-            parse_command("delm a b"),
-            Command::DeleteMarks(Some("ab".to_owned()))
-        );
-        assert_eq!(
-            parse_command("offset x"),
-            Command::Unknown("offset x".to_owned())
-        );
     }
 
     #[test]
@@ -520,7 +444,6 @@ mod tests {
         binds.bind("?", ConfigAction::ShowHelp).unwrap();
         binds.bind("g g", ConfigAction::JumpFirstPage).unwrap();
         binds.bind("Plus", ConfigAction::ZoomIn).unwrap();
-        binds.bind("Alt+t", ConfigAction::TagPage).unwrap();
         let items = help_entries(&binds);
         let keys = |k: &str| {
             items
@@ -535,7 +458,7 @@ mod tests {
                 ConfigAction::MoveDown.describe().to_owned()
             )
         );
-        assert!(keys("gg") && keys("?") && keys("+") && keys("Alt+t"));
+        assert!(keys("gg") && keys("?") && keys("+"));
         assert!(
             keys(":45") && keys("za zM zR"),
             "panel and command keys are listed"

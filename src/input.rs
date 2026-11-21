@@ -1,6 +1,6 @@
 /* What keys, the mouse wheel and `:` commands do */
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use keybinds::{KeyInput, Keybinds};
 
 use crate::app::*;
@@ -8,12 +8,10 @@ use crate::config::*;
 use crate::drivers::commands::PointerShape;
 use crate::frame::set_pointer;
 use crate::globals::*;
-use crate::notes::tags;
 use crate::outline::{current_section, TocKey};
-use crate::ruler;
 use crate::state::*;
 use crate::threads::renderer::{Renderer, RendererAction};
-use crate::ui::{self, help_max_scroll, help_visible, inner, toc_visible, viewport};
+use crate::ui::{self, help_max_scroll, help_visible, toc_visible, viewport};
 use crate::viewer::*;
 
 /* `true` indicates that the caller should exit *safely* the current process */
@@ -26,7 +24,7 @@ pub fn handle_key(
 ) -> bool {
     match &mut app.mode {
         Mode::Help { scroll } => {
-            let visible = help_visible(&inner());
+            let visible = help_visible(&viewport());
             let max = help_max_scroll(app.help.len(), visible);
             let half = (visible / 2).max(1);
             match key.code {
@@ -89,7 +87,6 @@ pub fn handle_key(
                     /* The zoom keys make the panel wider and narrower */
                     Some(ConfigAction::ZoomIn) => resize_toc(5, app),
                     Some(ConfigAction::ZoomOut) => resize_toc(-5, app),
-                    Some(action) if action.is_pane() => pane_action(action, viewer, app),
                     _ => (),
                 },
             }
@@ -99,14 +96,6 @@ pub fn handle_key(
     }
 
     app.message = None;
-
-    if let Some(kind) = app.pending_mark.take() {
-        app.count = None;
-        if let KeyCode::Char(c) = key.code {
-            use_mark(kind, c, viewer, app);
-        }
-        return false;
-    }
 
     if !key_matcher.is_ongoing() {
         if let Some(count) = count_digit(app.count, &key) {
@@ -127,26 +116,6 @@ pub fn handle_key(
     let speed = config.viewer.scroll_step * times as f32;
 
     match action {
-        ConfigAction::MoveUp | ConfigAction::MoveDown if app.ruler.is_some() => {
-            let delta = if action == ConfigAction::MoveDown {
-                times as isize
-            } else {
-                -(times as isize)
-            };
-            move_ruler(delta, viewer, app);
-        }
-        ConfigAction::ToggleRuler => {
-            if app.ruler.take().is_none() {
-                let (page, y) = viewer.top_of_view();
-                let pages = viewer.pages();
-                let lines = &mut app.lines;
-                app.ruler = ruler::first_from(page, y, pages, |p| lines.rows(p).to_vec());
-                match app.ruler {
-                    Some(_) => keep_ruler_in_view(viewer, app),
-                    None => app.message = Some("No text to follow from here".to_owned()),
-                }
-            }
-        }
         ConfigAction::MoveUp => viewer.scroll((0.0f32, -speed)),
         ConfigAction::MoveDown => viewer.scroll((0.0f32, speed)),
         ConfigAction::MoveLeft => viewer.scroll((-speed, 0.0f32)),
@@ -166,19 +135,11 @@ pub fn handle_key(
                 (None, ConfigAction::JumpFirstPage) => 0,
                 (None, _) => last_page,
             };
-            app.jumps.record(viewer.spot());
             let _ = viewer.jump(page);
         }
         ConfigAction::Quit => return true,
-        ConfigAction::ToggleAlpha => {
-            if !throttle(&mut app.throttle.alpha) {
-                return false;
-            }
-            tell_renderer(renderer, app, RendererAction::ToggleAlpha);
-            viewer.invalidate_registry();
-        }
         ConfigAction::ToggleInverse => {
-            if !throttle(&mut app.throttle.inverse) {
+            if !throttle(&mut app.inverse_toggled) {
                 return false;
             }
             tell_renderer(renderer, app, RendererAction::ToggleInverse);
@@ -205,26 +166,6 @@ pub fn handle_key(
         ConfigAction::ClearSearch => {
             run_command(Command::ClearSearch, viewer, renderer, app);
         }
-        ConfigAction::JumpBack | ConfigAction::JumpForward => {
-            for _ in 0..times {
-                let to = if action == ConfigAction::JumpBack {
-                    app.jumps.back(viewer.spot())
-                } else {
-                    app.jumps.forward()
-                };
-                match to {
-                    Some(spot) => viewer.go_to_spot(spot),
-                    None => {
-                        app.message = Some("No further jumps".to_owned());
-                        break;
-                    }
-                }
-            }
-        }
-        ConfigAction::SetMark | ConfigAction::GoToMark => {
-            key_matcher.reset();
-            app.pending_mark = Some(action);
-        }
         ConfigAction::ShowOutline => {
             key_matcher.reset();
             if app.toc.entries.is_empty() {
@@ -234,12 +175,6 @@ pub fn handle_key(
                 app.mode = Mode::Toc;
             }
         }
-        ConfigAction::ToggleNote
-        | ConfigAction::FocusPdf
-        | ConfigAction::WidenNote
-        | ConfigAction::NarrowNote
-        | ConfigAction::TagPage
-        | ConfigAction::GoToTag => pane_action(action, viewer, app),
         ConfigAction::NextMatch | ConfigAction::PrevMatch => {
             let steps = if action == ConfigAction::NextMatch {
                 times as isize
@@ -262,34 +197,18 @@ pub fn handle_key(
     false
 }
 
-/* The wheel at `x`, `y` in pixels scrolls what's under it: the contents panel, the
- * note, or the pages */
-pub fn handle_mouse_scroll(
-    kind: MouseEventKind,
-    mods: KeyModifiers,
-    (x, y): (u16, u16),
-    viewer: &mut Viewer,
-    app: &mut App,
-) -> bool {
+/* The wheel scrolls the key list or the contents panel while open, the pages
+ * otherwise */
+pub fn handle_mouse_scroll(kind: MouseEventKind, viewer: &mut Viewer, app: &mut App) {
     let config = CONFIG.get().unwrap();
-    let over_toc = app.mode == Mode::Toc && ui::over_toc(&viewport(), x, y);
-    if !over_toc && !matches!(app.mode, Mode::Help { .. }) {
-        if let Some((col, row)) = over_notes(app, x, y) {
-            if let Some(pane) = app.notes.terminal.as_mut() {
-                pane.mouse(kind, mods, col, row);
-            }
-            return false;
-        }
-    }
-
     if let Mode::Help { scroll } = &mut app.mode {
-        let max = help_max_scroll(app.help.len(), help_visible(&inner()));
+        let max = help_max_scroll(app.help.len(), help_visible(&viewport()));
         match kind {
             MouseEventKind::ScrollDown => *scroll = (*scroll + 1).min(max),
             MouseEventKind::ScrollUp => *scroll = scroll.saturating_sub(1),
             _ => (),
         }
-        return false;
+        return;
     }
     if app.mode == Mode::Toc {
         let visible = toc_visible(&viewport());
@@ -298,7 +217,7 @@ pub fn handle_mouse_scroll(
             MouseEventKind::ScrollUp => app.toc.scroll_by(-3, visible),
             _ => (),
         }
-        return false;
+        return;
     }
 
     let inverse_factor = if config.viewer.invert_wheel {
@@ -307,24 +226,13 @@ pub fn handle_mouse_scroll(
         -1.0
     };
 
+    let step = config.viewer.scroll_step;
     match kind {
-        MouseEventKind::ScrollUp => {
-            viewer.scroll((0.0f32, inverse_factor * config.viewer.scroll_step));
-            false
-        }
-        MouseEventKind::ScrollDown => {
-            viewer.scroll((0.0f32, -inverse_factor * config.viewer.scroll_step));
-            false
-        }
-        MouseEventKind::ScrollLeft => {
-            viewer.scroll((-config.viewer.scroll_step, 0.0f32));
-            false
-        }
-        MouseEventKind::ScrollRight => {
-            viewer.scroll((config.viewer.scroll_step, 0.0f32));
-            false
-        }
-        _ => false,
+        MouseEventKind::ScrollUp => viewer.scroll((0.0, inverse_factor * step)),
+        MouseEventKind::ScrollDown => viewer.scroll((0.0, -inverse_factor * step)),
+        MouseEventKind::ScrollLeft => viewer.scroll((-step, 0.0)),
+        MouseEventKind::ScrollRight => viewer.scroll((step, 0.0)),
+        _ => (),
     }
 }
 
@@ -338,28 +246,8 @@ pub fn run_command(
         Command::Empty => (),
         Command::Quit => return true,
         Command::Page(page) => {
-            app.jumps.record(viewer.spot());
             if viewer.jump(page - 1).is_err() {
                 app.message = Some(format!("Only {} pages", viewer.pages()));
-            }
-        }
-        Command::Goto(label) => {
-            if let Some(page) = viewer.find_label(&label) {
-                app.jumps.record(viewer.spot());
-                let _ = viewer.jump(page);
-            } else {
-                match label.parse::<usize>() {
-                    /* No page is printed with that number; take it as a position */
-                    Ok(page) if page >= 1 && page <= viewer.pages() => {
-                        app.jumps.record(viewer.spot());
-                        let _ = viewer.jump(page - 1);
-                        app.message = Some(format!(
-                            "No printed page {}, went to page #{}",
-                            label, page
-                        ));
-                    }
-                    _ => app.message = Some(format!("No page or command: {}", label)),
-                }
             }
         }
         Command::ClearSearch => {
@@ -367,40 +255,6 @@ pub fn run_command(
                 tell_renderer(renderer, app, RendererAction::ClearSearch);
                 viewer.invalidate_registry();
             }
-        }
-        Command::Marks => {
-            app.message = Some(if app.marks.is_empty() {
-                "No marks: m then a letter sets one".to_owned()
-            } else {
-                app.marks
-                    .iter()
-                    .map(|(c, spot)| format!("{} {}", c, viewer.page_label(spot.page)))
-                    .collect::<Vec<_>>()
-                    .join(" · ")
-            })
-        }
-        Command::DeleteMarks(None) => app.marks.clear(),
-        Command::DeleteMarks(Some(letters)) => {
-            for c in letters.chars() {
-                app.marks.remove(&c);
-            }
-        }
-        Command::Offset(None) => {
-            app.message = Some(match viewer.page_offset() {
-                0 => "No page offset: :offset 12 makes the 13th page printed page 1"
-                    .to_owned(),
-                n => format!("Printed page 1 is page #{}", n + 1),
-            })
-        }
-        Command::Offset(Some(offset)) => match viewer.set_page_offset(offset) {
-            Ok(()) => app.offset_by_hand = true,
-            Err(e) => app.message = Some(e),
-        },
-        Command::OffsetAuto => {
-            app.offset_by_hand = false;
-            let _ = viewer.set_page_offset(0);
-            app.message = Some("Reading the page numbers off the pages".to_owned());
-            tell_renderer(renderer, app, RendererAction::ReadNumbers);
         }
         Command::Unknown(text) => {
             app.message = Some(format!("Unknown command: {}", text))
@@ -431,38 +285,9 @@ pub fn show_current_match(
     tell_renderer(renderer, app, RendererAction::SetCurrentMatch(current));
     let Some(search) = &app.search else { return };
     if let Some(m) = search.current_match().filter(|_| scroll) {
-        app.jumps.record(viewer.spot());
         viewer.jump_to(m.page, m.y, 0.25);
     }
     viewer.invalidate_registry();
-}
-
-/* Sets mark `c`, or goes to it; going to the backtick or quote mark goes back to
- * where the last jump started, as in vim */
-pub fn use_mark(kind: ConfigAction, c: char, viewer: &mut Viewer, app: &mut App) {
-    if kind == ConfigAction::SetMark {
-        if c.is_ascii_lowercase() {
-            app.marks.insert(c, viewer.spot());
-            app.message = Some(format!("Mark {} set", c));
-        } else {
-            app.message = Some("Marks are the letters a to z".to_owned());
-        }
-        return;
-    }
-    if c == '`' || c == '\'' {
-        match app.jumps.back(viewer.spot()) {
-            Some(spot) => viewer.go_to_spot(spot),
-            None => app.message = Some("No jump to go back to".to_owned()),
-        }
-        return;
-    }
-    match app.marks.get(&c).copied() {
-        Some(spot) => {
-            app.jumps.record(viewer.spot());
-            viewer.go_to_spot(spot);
-        }
-        None => app.message = Some(format!("No mark {}", c)),
-    }
 }
 
 /* Opens the panel's tree down to the section being read and selects it */
@@ -478,10 +303,7 @@ pub fn toc_jump(viewer: &mut Viewer, app: &mut App) {
         return;
     };
     match entry.page {
-        Some(page) => {
-            app.jumps.record(viewer.spot());
-            viewer.jump_target(page, entry.top);
-        }
+        Some(page) => viewer.jump_target(page, entry.top),
         None => app.message = Some("This entry points outside the document".to_owned()),
     }
 }
@@ -505,47 +327,6 @@ pub fn toc_click(mouse: MouseEvent, viewer: &mut Viewer, app: &mut App) {
     }
 }
 
-/* Scrolls when the ruler's line is off screen or near an edge */
-pub fn keep_ruler_in_view(viewer: &mut Viewer, app: &mut App) {
-    let Some(r) = app.ruler else { return };
-    let height = viewport().height() as f64;
-    let shown = ruler_band(app, viewer)
-        .is_some_and(|(_, y, _, h)| y >= height * 0.05 && y + h <= height * 0.85);
-    if !shown {
-        if let Some(row) = app.lines.rows(r.page).get(r.row).copied() {
-            viewer.jump_to(r.page, row.top, 0.3);
-        }
-    }
-}
-
-pub fn move_ruler(delta: isize, viewer: &mut Viewer, app: &mut App) {
-    let Some(from) = app.ruler else { return };
-    let pages = viewer.pages();
-    /* Scrolled away from the ruler: pick it up at the top of the view */
-    let from = if ruler_band(app, viewer).is_some() {
-        Some(from)
-    } else {
-        let (page, y) = viewer.top_of_view();
-        let lines = &mut app.lines;
-        ruler::first_from(page, y, pages, |p| lines.rows(p).to_vec())
-    };
-    let lines = &mut app.lines;
-    match from.and_then(|f| ruler::step(f, delta, pages, |p| lines.rows(p).len())) {
-        Some(to) => app.ruler = Some(to),
-        None => {
-            app.message = Some(
-                if delta > 0 {
-                    "End of the text"
-                } else {
-                    "Start of the text"
-                }
-                .to_owned(),
-            )
-        }
-    }
-    keep_ruler_in_view(viewer, app);
-}
-
 /* Hovering and clicking: the pointer shape, the link hint, following links, and clicks
  * in the contents panel. Returns whether the mouse clicked. */
 pub fn handle_pointer(
@@ -553,7 +334,7 @@ pub fn handle_pointer(
     viewer: &mut Viewer,
     app: &mut App,
 ) -> bool {
-    let clicked = mouse.kind.is_down();
+    let clicked = matches!(mouse.kind, MouseEventKind::Down(_));
     let over_panel =
         app.mode == Mode::Toc && ui::over_toc(&viewport(), mouse.column, mouse.row);
     if over_panel {
@@ -571,7 +352,6 @@ pub fn handle_pointer(
             /* URI points to page in this document */
             if link.uri.starts_with('#') {
                 if let Some(destination) = &link.dest {
-                    app.jumps.record(viewer.spot());
                     viewer.jump_dest(destination);
                 }
             } else {
@@ -580,172 +360,14 @@ pub fn handle_pointer(
 
             set_pointer(app, PointerShape::Default);
 
-            /* Since the mouse position is saved but this loop runs on other triggers
-             * such as key press, don't allow the mouse to accidentely click on other
-             * links when the viewer is scrolled down by key presses */
+            /* The mouse is kept between passes of the main loop; a click counts once,
+             * not again on a link that a key scrolls under it */
             mouse.kind = MouseEventKind::Moved;
         }
     } else {
         set_pointer(app, PointerShape::Default);
     }
     clicked
-}
-
-/* What the notes actions do, from the PDF or from inside the editor */
-pub fn pane_action(action: ConfigAction, viewer: &mut Viewer, app: &mut App) {
-    match action {
-        /* From inside the terminal it hides; what runs there goes on, saved */
-        ConfigAction::ToggleNote if app.notes.open && app.notes.focused => {
-            app.notes.hide()
-        }
-        ConfigAction::ToggleNote => {
-            if let Err(e) = app.notes.focus(editor_size()) {
-                app.message = Some(e);
-            }
-        }
-        ConfigAction::FocusPdf => app.notes.unfocus(),
-        /* A small step, so that holding the key resizes smoothly */
-        ConfigAction::WidenNote | ConfigAction::NarrowNote => {
-            let step: i16 = if action == ConfigAction::WidenNote {
-                2
-            } else {
-                -2
-            };
-            ui::set_notes_percent((ui::notes_percent() as i16 + step).max(0) as u16);
-            save_panel_sizes();
-            app.message = Some(format!("Note {}% wide", ui::notes_percent()));
-        }
-        /* At the editor's cursor, as a paste, so helix keeps its mode */
-        ConfigAction::TagPage => {
-            let label = viewer.page_label(viewer.page_view());
-            match &mut app.notes.terminal {
-                Some(editor) => {
-                    editor.paste(&format!("{} ", tags::tag(&label)));
-                    app.message = Some(format!("Tagged page {}", label));
-                }
-                _ => app.message = Some("Open the note first, with Ctrl-h".to_owned()),
-            }
-            return;
-        }
-        ConfigAction::GoToTag => {
-            let found = app.notes.terminal.as_ref().map(|editor| {
-                let (col, row) = editor.cursor_point();
-                tags::nearest_tag(&editor.text(), row as usize, col as usize)
-            });
-            match found {
-                Some(Some(page)) => go_to_tag(&page, viewer, app),
-                Some(None) => app.message = Some("No page tag here or above".to_owned()),
-                None => app.message = Some("Open the note first, with Ctrl-h".to_owned()),
-            }
-            return;
-        }
-        _ => return,
-    }
-    if app.mode == Mode::Toc && app.notes.focused {
-        app.mode = Mode::Normal;
-    }
-    apply_layout(viewer, app);
-}
-
-/* A key while the notes panel has the keys. The notes keys with Ctrl or Alt in
- * `global` work here too; any other key goes to the terminal. */
-pub fn handle_notes_key(
-    key: KeyEvent,
-    global: &mut Keybinds<ConfigAction>,
-    viewer: &mut Viewer,
-    app: &mut App,
-) {
-    let was_ongoing = global.is_ongoing();
-    if let Some(action) = global.dispatch(KeyInput::from(key)).copied() {
-        pane_action(action, viewer, app);
-        return;
-    }
-    /* Part of a longer key sequence, or a key that ended one without a match */
-    if was_ongoing || global.is_ongoing() {
-        return;
-    }
-
-    app.message = None;
-    if let Some(pane) = app.notes.terminal.as_mut() {
-        pane.key(&key);
-    }
-}
-
-/* The cell of the terminal under `x`, `y` in pixels, when that's over the notes panel */
-fn over_notes(app: &App, x: u16, y: u16) -> Option<(u16, u16)> {
-    if !app.notes.open {
-        return None;
-    }
-    let window = ui::window();
-    let (left, top, width, height) = ui::notes_rect(&window, ui::notes_percent());
-    let (col, row) = ui::cell_at(&window, x, y);
-    let inside = col >= left && col < left + width && row >= top && row < top + height;
-    inside.then(|| (col - left, row - top))
-}
-
-/* Clicks and drags with the notes panel open. A click in the side that doesn't have
- * the keys gives it the keys and does nothing else; in the notes panel the mouse then
- * reaches the editor. `true` when the event was the panel's. */
-pub fn notes_mouse(mouse: &mut MouseEvent, viewer: &mut Viewer, app: &mut App) -> bool {
-    /* The wheel comes as input too, and goes to the terminal from there */
-    let wheel = matches!(
-        mouse.kind,
-        MouseEventKind::ScrollUp
-            | MouseEventKind::ScrollDown
-            | MouseEventKind::ScrollLeft
-            | MouseEventKind::ScrollRight
-    );
-    if wheel
-        || !app.notes.open
-        || (app.mode == Mode::Toc && ui::over_toc(&viewport(), mouse.column, mouse.row))
-    {
-        return false;
-    }
-    let over = over_notes(app, mouse.column, mouse.row);
-    match (mouse.kind, over, app.notes.focused) {
-        (MouseEventKind::Down(_), Some(_), false) => {
-            pane_action(ConfigAction::ToggleNote, viewer, app);
-            mouse.kind = MouseEventKind::Moved;
-            true
-        }
-        (MouseEventKind::Down(_), None, true) => {
-            pane_action(ConfigAction::FocusPdf, viewer, app);
-            mouse.kind = MouseEventKind::Moved;
-            true
-        }
-        /* Ctrl-click on a page tag in the note goes there */
-        (MouseEventKind::Down(_), Some((col, row)), true)
-            if mouse.modifiers.contains(KeyModifiers::CONTROL) =>
-        {
-            let page = app.notes.terminal.as_ref().and_then(|editor| {
-                let text = editor.text();
-                tags::tag_at(text.get(row as usize)?, col as usize)
-            });
-            if let Some(page) = page {
-                go_to_tag(&page, viewer, app);
-            }
-            mouse.kind = MouseEventKind::Moved;
-            true
-        }
-        (kind, Some((col, row)), true) => {
-            if let Some(pane) = app.notes.terminal.as_mut() {
-                pane.mouse(kind, mouse.modifiers, col, row);
-            }
-            mouse.kind = MouseEventKind::Moved;
-            true
-        }
-        /* A drag that leaves the panel still belongs to the editor */
-        (MouseEventKind::Drag(_) | MouseEventKind::Up(_), None, true) => {
-            let (col, row) = (0, 0);
-            if let Some(pane) = app.notes.terminal.as_mut() {
-                pane.mouse(mouse.kind, mouse.modifiers, col, row);
-            }
-            mouse.kind = MouseEventKind::Moved;
-            true
-        }
-        (_, Some(_), false) => true,
-        _ => false,
-    }
 }
 
 /* Widens or narrows the contents panel by `step` percent of the pages' width, and
@@ -755,26 +377,6 @@ fn resize_toc(step: i16, app: &mut App) {
     ui::set_toc_percent(percent);
     save_panel_sizes();
     app.message = Some(format!("Contents {}% wide", ui::toc_percent()));
-}
-
-/* Moves the PDF to the page a tag names: the page printed with it, or else that page of
- * the file. The note keeps the keys. */
-fn go_to_tag(page: &str, viewer: &mut Viewer, app: &mut App) {
-    let target = viewer.find_label(page).or_else(|| {
-        page.trim_start_matches('#')
-            .parse::<usize>()
-            .ok()
-            .filter(|n| *n >= 1 && *n <= viewer.pages())
-            .map(|n| n - 1)
-    });
-    match target {
-        Some(index) => {
-            app.jumps.record(viewer.spot());
-            let _ = viewer.jump(index);
-            app.message = Some(format!("Page {}", page));
-        }
-        None => app.message = Some(format!("No page {} in this PDF", page)),
-    }
 }
 
 /* Opens a web or mail link with the system's opener; other kinds, such as `file:` or

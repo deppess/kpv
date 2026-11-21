@@ -6,18 +6,15 @@ use std::{
     thread,
 };
 
-use crossterm::event::{read, Event, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{read, Event, KeyEvent, MouseEvent, MouseEventKind};
 
 use super::{wake, Wake};
 use crate::globals::RUNNING;
 
 pub enum InputEvent {
     Key(KeyEvent),
-    /* The wheel, and where the mouse was, in pixels */
-    MouseScroll(MouseEventKind, KeyModifiers, u16, u16),
-    Paste(String),
-    /* The terminal window gained or lost focus */
-    Focus(bool),
+    /* The wheel */
+    MouseScroll(MouseEventKind),
 }
 
 /* Reads the terminal: keys, the mouse and the window's size go to the main loop, and
@@ -44,20 +41,15 @@ pub fn spawn() -> Receiver<String> {
                             | MouseEventKind::ScrollDown
                             | MouseEventKind::ScrollLeft
                             | MouseEventKind::ScrollRight),
-                        modifiers,
-                        column,
-                        row,
+                        ..
                     },
                 ) => {
-                    wake(Wake::Input(InputEvent::MouseScroll(
-                        kind, modifiers, column, row,
-                    ))) && wake(Wake::Mouse(event))
+                    wake(Wake::Input(InputEvent::MouseScroll(kind)))
+                        && wake(Wake::Mouse(event))
                 }
                 Event::Mouse(event) => wake(Wake::Mouse(event)),
                 Event::Resize(..) => wake(Wake::Resize),
-                Event::Paste(text) => wake(Wake::Input(InputEvent::Paste(text))),
-                Event::FocusGained => wake(Wake::Input(InputEvent::Focus(true))),
-                Event::FocusLost => wake(Wake::Input(InputEvent::Focus(false))),
+                Event::FocusGained | Event::FocusLost => true,
             };
             if !sent {
                 return;

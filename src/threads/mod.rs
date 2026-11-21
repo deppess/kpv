@@ -23,8 +23,6 @@ pub enum Wake {
     Reload,
     /* Something wants the screen drawn again */
     Redraw,
-    /* The notes terminal's program wrote something, or ended */
-    Terminal,
     /* The window closed, `kill` or an interrupt: quit as on `q` */
     Stop,
     /* A part the viewer can't go on without stopped */

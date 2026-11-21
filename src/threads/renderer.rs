@@ -17,7 +17,6 @@ use crate::{
     config::Config,
     globals::{CONFIG, RENDER_SCALE, RUNNING},
     image::{recolor_pixels, Image, Region},
-    labels,
     outline::{self, OutlineEntry},
     store,
     theme::{paint, Slot},
@@ -39,13 +38,10 @@ pub enum RendererAction {
     Load,
     Display(Request),
     ToggleInverse,
-    ToggleAlpha,
     Search(String),
     /* Index into the last search results, drawn in the stronger color */
     SetCurrentMatch(Option<usize>),
     ClearSearch,
-    /* Read the page numbers printed on the pages again */
-    ReadNumbers,
 }
 
 /* One search hit: its page, and its top-left corner in page units from the page's
@@ -64,8 +60,6 @@ pub enum RendererResult {
         cumulative_heights: Vec<f32>,
         widths: Vec<f32>,
         links: Vec<Vec<Link>>,
-        /* The printed label of every page */
-        labels: Vec<String>,
         outline: Vec<OutlineEntry>,
         /* The permanent half of the PDF's /ID */
         id: Option<String>,
@@ -76,11 +70,6 @@ pub enum RendererResult {
     Image {
         page: usize,
         data: Option<Arc<RwLock<Image>>>,
-    },
-    /* How far into the file printed page 1 is, read off the pages' margins; `None` when
-     * they don't say clearly */
-    PrintedNumbers {
-        offset: Option<i32>,
     },
     /* Matches found since the last batch, by the search `generation`, with how many
      * of the `total` pages it has searched; it's done when they're all searched */
@@ -107,7 +96,6 @@ struct RendererInnerState<'a> {
     search_generation: Arc<AtomicU64>,
     pub current_hit: Option<usize>,
 
-    pub alpha: bool,
     pub inverse: bool,
 
     pub cs: Colorspace,
@@ -127,7 +115,6 @@ impl<'a> RendererInnerState<'a> {
             hits: Arc::new(Mutex::new(Vec::new())),
             search_generation: Arc::new(AtomicU64::new(0)),
             current_hit: None,
-            alpha: false,
             inverse: false,
             cs: Colorspace::device_rgb(),
         };
@@ -181,7 +168,6 @@ impl<'a> RendererInnerState<'a> {
             cache.push(page);
         }
 
-        let labels = labels::labels(&labels::read(&document), page_count as usize);
         /* A document without an outline, or with a broken one, has no contents */
         let outline = document
             .outlines()
@@ -209,7 +195,6 @@ impl<'a> RendererInnerState<'a> {
             cumulative_heights,
             widths,
             links,
-            labels,
             outline,
             id,
             title,
@@ -249,13 +234,9 @@ impl RendererInnerState<'_> {
             true,
         )
         .ok()?;
-        if self.alpha {
-            pixmap.clear().ok()?;
-        } else {
-            pixmap.clear_with(255).ok()?;
-            let (width, height) = (pixmap.width() as usize, pixmap.height() as usize);
-            clear_border(pixmap.samples_mut(), width, height, pad as usize);
-        }
+        pixmap.clear_with(255).ok()?;
+        let (width, height) = (pixmap.width() as usize, pixmap.height() as usize);
+        clear_border(pixmap.samples_mut(), width, height, pad as usize);
         {
             let device = Device::from_pixmap(&pixmap).ok()?;
             page.run(&device, &Matrix::new_scale(scale, scale)).ok()?;
@@ -374,9 +355,6 @@ impl RendererInnerState<'_> {
                             + color[c] as u32 * alpha)
                             / 255) as u8;
                     }
-                    if n == 4 {
-                        samples[at + 3] = samples[at + 3].max(alpha as u8);
-                    }
                 }
             }
         }
@@ -390,22 +368,10 @@ pub fn page_color(slot: Slot, fallback: [u8; 3], strength: u8) -> ([u8; 3], u8) 
     (p.rgb().unwrap_or(fallback), p.alpha().unwrap_or(strength))
 }
 
-/* Reads the page numbers printed on the pages, on a thread of its own with its own copy
- * of the document, so that opening a file isn't slower */
-fn read_printed_numbers(file: String) {
-    thread::spawn(move || {
-        let Ok(document) = Document::open(&file) else {
-            return;
-        };
-        let offset = crate::numbers::detect(&document);
-        wake(Wake::Rendered(RendererResult::PrintedNumbers { offset }));
-    });
-}
-
 /* Clear pixels around a page image: two cells, so that while a page waits for its
  * image at a new zoom, the old one can still be cut at whole cells */
 fn padding() -> usize {
-    let vp = crate::ui::inner();
+    let vp = crate::ui::viewport();
     (2.0 * vp.pxpercol.max(vp.pxperrow)).ceil() as usize
 }
 
@@ -467,11 +433,6 @@ fn render_loop(
                 /* A failed reload keeps showing the last good version */
                 let Ok(result) = state.load() else { continue };
                 wake(Wake::Rendered(result));
-                /* After the pages, so its answer comes after them */
-                read_printed_numbers(state.file.clone());
-            }
-            RendererAction::ToggleAlpha => {
-                state.alpha = !state.alpha;
             }
             RendererAction::ToggleInverse => {
                 state.inverse = !state.inverse;
@@ -481,9 +442,6 @@ fn render_loop(
             }
             RendererAction::SetCurrentMatch(current) => {
                 state.current_hit = current;
-            }
-            RendererAction::ReadNumbers => {
-                read_printed_numbers(state.file.clone());
             }
             RendererAction::ClearSearch => {
                 state.search_generation.fetch_add(1, Ordering::AcqRel);
@@ -498,8 +456,7 @@ fn render_loop(
                     continue;
                 }
                 if state.cache.get(page).is_none() {
-                    // Sending `None` as data signals that it should be
-                    // removed from the registry
+                    /* A page the new version doesn't have is forgotten */
                     wake(Wake::Rendered(RendererResult::Image { page, data: None }));
                     continue;
                 }

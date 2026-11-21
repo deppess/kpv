@@ -28,11 +28,10 @@
 //! Blocking read:
 //!
 //! ```no_run
-//! #![cfg(feature = "bracketed-paste")]
 //! use crossterm::{
 //!     event::{
-//!         read, DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
-//!         EnableFocusChange, EnableMouseCapture, Event,
+//!         read, DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture,
+//!         Event,
 //!     },
 //!     execute,
 //! };
@@ -40,7 +39,6 @@
 //! fn print_events() -> std::io::Result<()> {
 //!     execute!(
 //!          std::io::stdout(),
-//!          EnableBracketedPaste,
 //!          EnableFocusChange,
 //!          EnableMouseCapture
 //!     )?;
@@ -51,15 +49,12 @@
 //!             Event::FocusLost => println!("FocusLost"),
 //!             Event::Key(event) => println!("{:?}", event),
 //!             Event::Mouse(event) => println!("{:?}", event),
-//!             #[cfg(feature = "bracketed-paste")]
-//!             Event::Paste(data) => println!("{:?}", data),
 //!             Event::Resize(width, height) => println!("New size {}x{}", width, height),
 //!             Event::ApplicationProgramCommand(command) => println!("New APC {}", command),
 //!         }
 //!     }
 //!     execute!(
 //!         std::io::stdout(),
-//!         DisableBracketedPaste,
 //!         DisableFocusChange,
 //!         DisableMouseCapture
 //!     )?;
@@ -70,13 +65,12 @@
 //! Non-blocking read:
 //!
 //! ```no_run
-//! #![cfg(feature = "bracketed-paste")]
 //! use std::{time::Duration, io};
 //!
 //! use crossterm::{
 //!     event::{
-//!         poll, read, DisableBracketedPaste, DisableFocusChange, DisableMouseCapture,
-//!         EnableBracketedPaste, EnableFocusChange, EnableMouseCapture, Event,
+//!         poll, read, DisableFocusChange, DisableMouseCapture, EnableFocusChange,
+//!         EnableMouseCapture, Event,
 //!     },
 //!     execute,
 //! };
@@ -84,7 +78,6 @@
 //! fn print_events() -> io::Result<()> {
 //!     execute!(
 //!          std::io::stdout(),
-//!          EnableBracketedPaste,
 //!          EnableFocusChange,
 //!          EnableMouseCapture
 //!     )?;
@@ -98,8 +91,6 @@
 //!                 Event::FocusLost => println!("FocusLost"),
 //!                 Event::Key(event) => println!("{:?}", event),
 //!                 Event::Mouse(event) => println!("{:?}", event),
-//!                 #[cfg(feature = "bracketed-paste")]
-//!                 Event::Paste(data) => println!("Pasted {:?}", data),
 //!                 Event::Resize(width, height) => println!("New size {}x{}", width, height),
 //!                 Event::ApplicationProgramCommand(command) => println!("New APC {}", command),
 //!             }
@@ -109,7 +100,6 @@
 //!     }
 //!     execute!(
 //!         std::io::stdout(),
-//!         DisableBracketedPaste,
 //!         DisableFocusChange,
 //!         DisableMouseCapture
 //!     )?;
@@ -125,9 +115,6 @@ pub(crate) mod read;
 pub(crate) mod source;
 pub(crate) mod sys;
 pub(crate) mod timeout;
-
-#[cfg(feature = "derive-more")]
-use derive_more::derive::IsVariant;
 
 use crate::event::{
     filter::{EventFilter, Filter},
@@ -381,37 +368,6 @@ impl Command for DisableFocusChange {
 
 }
 
-/// A command that enables [bracketed paste mode](https://en.wikipedia.org/wiki/Bracketed-paste).
-///
-/// It should be paired with [`DisableBracketedPaste`] at the end of execution.
-///
-/// This is not supported in older Windows terminals without
-/// [virtual terminal sequences](https://docs.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences).
-#[cfg(feature = "bracketed-paste")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EnableBracketedPaste;
-
-#[cfg(feature = "bracketed-paste")]
-impl Command for EnableBracketedPaste {
-    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        f.write_str(csi!("?2004h"))
-    }
-
-}
-
-/// A command that disables bracketed paste mode.
-#[cfg(feature = "bracketed-paste")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DisableBracketedPaste;
-
-#[cfg(feature = "bracketed-paste")]
-impl Command for DisableBracketedPaste {
-    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        f.write_str(csi!("?2004l"))
-    }
-
-}
-
 /// A command that enables the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/), which adds extra information to keyboard events and removes ambiguity for modifier keys.
 ///
 /// It should be paired with [`PopKeyboardEnhancementFlags`] at the end of execution.
@@ -477,8 +433,6 @@ impl Command for PopKeyboardEnhancementFlags {
 }
 
 /// Represents an event.
-#[cfg_attr(feature = "derive-more", derive(IsVariant))]
-#[cfg_attr(not(feature = "bracketed-paste"), derive(Copy))]
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Hash)]
 pub enum Event {
     /// The terminal gained focus
@@ -489,10 +443,6 @@ pub enum Event {
     Key(KeyEvent),
     /// A single mouse event with additional pressed modifiers.
     Mouse(MouseEvent),
-    /// A string that was pasted into the terminal. Only emitted if bracketed paste has been
-    /// enabled.
-    #[cfg(feature = "bracketed-paste")]
-    Paste(String),
     /// An resize event with new dimensions after resize (columns, rows).
     /// **Note** that resize events can occur in batches.
     Resize(u16, u16),
@@ -647,29 +597,6 @@ impl Event {
         }
     }
 
-    /// Returns the pasted string if the event is a paste event, otherwise `None`.
-    ///
-    /// This is a convenience method that makes code which only cares about paste events easier to write.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use crossterm::event;
-    ///
-    /// while let Some(paste) = event::read()?.as_paste_event() {
-    ///     // ...
-    /// }
-    /// # std::io::Result::Ok(())
-    /// ```
-    #[cfg(feature = "bracketed-paste")]
-    #[inline]
-    pub fn as_paste_event(&self) -> Option<&str> {
-        match self {
-            Event::Paste(paste) => Some(paste),
-            _ => None,
-        }
-    }
-
     /// Returns the size as a tuple if the event is a resize event, otherwise `None`.
     ///
     /// This is a convenience method that makes code which only cares about resize events easier to write.
@@ -751,7 +678,6 @@ pub struct MouseEvent {
 /// Some platforms/terminals do not report mouse button for the
 /// `MouseEventKind::Up` and `MouseEventKind::Drag` events. `MouseButton::Left`
 /// is returned if we don't know which button was used.
-#[cfg_attr(feature = "derive-more", derive(IsVariant))]
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum MouseEventKind {
     /// Pressed mouse button. Contains the button that was pressed.
@@ -773,7 +699,6 @@ pub enum MouseEventKind {
 }
 
 /// Represents a mouse button.
-#[cfg_attr(feature = "derive-more", derive(IsVariant))]
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum MouseButton {
     /// Left mouse button.
@@ -851,7 +776,6 @@ impl Display for KeyModifiers {
 }
 
 /// Represents a keyboard event kind.
-#[cfg_attr(feature = "derive-more", derive(IsVariant))]
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum KeyEventKind {
     Press,
@@ -1168,7 +1092,6 @@ impl Display for ModifierKeyCode {
 
 /// Represents a key.
 #[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Clone, Copy, Hash)]
-#[cfg_attr(feature = "derive-more", derive(IsVariant))]
 pub enum KeyCode {
     /// Backspace key (Delete on macOS, Backspace on other platforms).
     Backspace,
@@ -1201,12 +1124,10 @@ pub enum KeyCode {
     /// F key.
     ///
     /// `KeyCode::F(1)` represents F1 key, etc.
-    #[cfg_attr(feature = "derive-more", is_variant(ignore))]
     F(u8),
     /// A character.
     ///
     /// `KeyCode::Char('c')` represents `c` character, etc.
-    #[cfg_attr(feature = "derive-more", is_variant(ignore))]
     Char(char),
     /// Null.
     Null,
@@ -1259,7 +1180,6 @@ pub enum KeyCode {
     /// **Note:** these keys can only be read if
     /// [`KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES`] has been enabled with
     /// [`PushKeyboardEnhancementFlags`].
-    #[cfg_attr(feature = "derive-more", is_variant(ignore))]
     Media(MediaKeyCode),
     /// A modifier key.
     ///
@@ -1267,7 +1187,6 @@ pub enum KeyCode {
     /// [`KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES`] and
     /// [`KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES`] have been enabled with
     /// [`PushKeyboardEnhancementFlags`].
-    #[cfg_attr(feature = "derive-more", is_variant(ignore))]
     Modifier(ModifierKeyCode),
 }
 
@@ -1599,56 +1518,6 @@ mod tests {
         modifiers: KeyModifiers::empty(),
     };
 
-    #[cfg(feature = "derive-more")]
-    #[test]
-    fn event_is() {
-        let event = Event::FocusGained;
-        assert!(event.is_focus_gained());
-        assert!(event.is_focus_gained());
-        assert!(!event.is_key());
-
-        let event = Event::FocusLost;
-        assert!(event.is_focus_lost());
-        assert!(!event.is_focus_gained());
-        assert!(!event.is_key());
-
-        let event = Event::Resize(1, 1);
-        assert!(event.is_resize());
-        assert!(!event.is_key());
-
-        let event = Event::Key(ESC_PRESSED);
-        assert!(event.is_key());
-        assert!(event.is_key_press());
-        assert!(!event.is_key_release());
-        assert!(!event.is_key_repeat());
-        assert!(!event.is_focus_gained());
-
-        let event = Event::Key(ESC_RELEASED);
-        assert!(event.is_key());
-        assert!(!event.is_key_press());
-        assert!(event.is_key_release());
-        assert!(!event.is_key_repeat());
-        assert!(!event.is_focus_gained());
-
-        let event = Event::Key(ESC_REPEAT);
-        assert!(event.is_key());
-        assert!(!event.is_key_press());
-        assert!(!event.is_key_release());
-        assert!(event.is_key_repeat());
-        assert!(!event.is_focus_gained());
-
-        let event = Event::Mouse(MOUSE_CLICK);
-        assert!(event.is_mouse());
-        assert!(!event.is_key());
-
-        #[cfg(feature = "bracketed-paste")]
-        {
-            let event = Event::Paste("".to_string());
-            assert!(event.is_paste());
-            assert!(!event.is_key());
-        }
-    }
-
     #[test]
     fn event_as() {
         let event = Event::FocusGained;
@@ -1698,19 +1567,6 @@ mod tests {
         assert_eq!(event.as_key_repeat_event(), None);
         assert_eq!(event.as_resize_event(), None);
         assert_eq!(event.as_apc_event(), None);
-
-        #[cfg(feature = "bracketed-paste")]
-        {
-            let event = Event::Paste("".to_string());
-            assert_eq!(event.as_paste_event(), Some(""));
-            assert_eq!(event.as_key_event(), None);
-            assert_eq!(event.as_key_release_event(), None);
-            assert_eq!(event.as_key_press_event(), None);
-            assert_eq!(event.as_key_repeat_event(), None);
-            assert_eq!(event.as_resize_event(), None);
-            assert_eq!(event.as_mouse_event(), None);
-            assert_eq!(event.as_apc_event(), None);
-        }
 
         let event = Event::ApplicationProgramCommand("".to_string());
         assert_eq!(event.as_apc_event(), Some(""));

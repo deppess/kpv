@@ -2,7 +2,7 @@
 name = "viewmer"
 version = "1.0.0"
 edition = "2021"
-description = "A PDF viewer for the kitty terminal, with a notes terminal beside the pages"
+description = "A PDF viewer for the kitty terminal"
 license = "PolyForm-Strict-1.0.0"
 repository = "https://codeberg.org/deppes/viewmer"
 readme = "README.md"
@@ -16,9 +16,7 @@ toml = { version = "0.9", default-features = false, features = ["parse", "displa
 crossterm = "0.29"
 keybinds = { version = "0.2", features = ["crossterm", "serde"] }
 unicode-width = "0.2"
-alacritty_terminal = "0.26"
 signal-hook = "0.3.18"
-libc = "0.2"
 
 [patch.crates-io]
 crossterm = { path = "vendor/crossterm" }

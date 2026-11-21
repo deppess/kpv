@@ -10,19 +10,7 @@ use crate::globals::{CONFIG_FILENAME, DEFAULT_CONFIG};
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub viewer: ConfigViewer,
-    pub notes: ConfigNotes,
-    pub bindings: Option<Keybinds<ConfigAction>>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ConfigNotes {
-    pub vault: String,
-    pub folder: String,
-    pub shell: String,
-    pub editor: String,
-    pub template: String,
-    /* Percent of the window */
-    pub width: u16,
+    pub bindings: Keybinds<ConfigAction>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,7 +27,6 @@ pub struct ConfigViewer {
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConfigAction {
-    ToggleAlpha,
     ToggleInverse,
     CenterViewer,
     MoveUp,
@@ -60,28 +47,17 @@ pub enum ConfigAction {
     PrevMatch,
     ClearSearch,
     ShowOutline,
-    JumpBack,
-    JumpForward,
-    SetMark,
-    GoToMark,
-    ToggleRuler,
     HalfPageDown,
     HalfPageUp,
     FitWidth,
     FitPage,
-    ToggleNote,
-    FocusPdf,
-    WidenNote,
-    NarrowNote,
-    TagPage,
-    GoToTag,
 }
 
 impl ConfigAction {
     /* Every action, for the tests that check each one has a key and a place in the
      * key list */
     #[cfg(test)]
-    pub const ALL: [ConfigAction; 36] = [
+    pub const ALL: [ConfigAction; 24] = [
         ConfigAction::MoveDown,
         ConfigAction::MoveUp,
         ConfigAction::MoveLeft,
@@ -92,10 +68,6 @@ impl ConfigAction {
         ConfigAction::PrevPage,
         ConfigAction::JumpFirstPage,
         ConfigAction::JumpLastPage,
-        ConfigAction::JumpBack,
-        ConfigAction::JumpForward,
-        ConfigAction::SetMark,
-        ConfigAction::GoToMark,
         ConfigAction::CommandLine,
         ConfigAction::Search,
         ConfigAction::NextMatch,
@@ -107,36 +79,15 @@ impl ConfigAction {
         ConfigAction::FitWidth,
         ConfigAction::FitPage,
         ConfigAction::CenterViewer,
-        ConfigAction::ToggleRuler,
         ConfigAction::ToggleInverse,
-        ConfigAction::ToggleAlpha,
-        ConfigAction::ToggleNote,
-        ConfigAction::FocusPdf,
-        ConfigAction::WidenNote,
-        ConfigAction::NarrowNote,
-        ConfigAction::TagPage,
-        ConfigAction::GoToTag,
         ConfigAction::ShowHelp,
         ConfigAction::Quit,
     ];
 
-    /* What the notes panel does; with Ctrl or Alt they work from inside the editor too */
-    pub fn is_pane(self) -> bool {
-        matches!(
-            self,
-            ConfigAction::ToggleNote
-                | ConfigAction::FocusPdf
-                | ConfigAction::WidenNote
-                | ConfigAction::NarrowNote
-                | ConfigAction::TagPage
-                | ConfigAction::GoToTag
-        )
-    }
-
     pub fn describe(self) -> &'static str {
         match self {
-            ConfigAction::MoveDown => "Scroll down (ruler on: next line)",
-            ConfigAction::MoveUp => "Scroll up (ruler on: line before)",
+            ConfigAction::MoveDown => "Scroll down",
+            ConfigAction::MoveUp => "Scroll up",
             ConfigAction::MoveLeft => "Scroll left",
             ConfigAction::MoveRight => "Scroll right",
             ConfigAction::NextPage => "Next page",
@@ -149,10 +100,6 @@ impl ConfigAction {
             ConfigAction::PrevMatch => "Previous match",
             ConfigAction::ClearSearch => "Clear the search",
             ConfigAction::ShowOutline => "Open the contents",
-            ConfigAction::JumpBack => "Back to where the last jump started",
-            ConfigAction::JumpForward => "Forward again",
-            ConfigAction::SetMark => "Set a mark, then a letter",
-            ConfigAction::GoToMark => "Go to a mark, then its letter",
             ConfigAction::ZoomIn => "Zoom in",
             ConfigAction::ZoomOut => "Zoom out",
             ConfigAction::CenterViewer => "Center the page",
@@ -161,14 +108,6 @@ impl ConfigAction {
             ConfigAction::HalfPageUp => "Half a screen up",
             ConfigAction::FitWidth => "Fit the width (100%)",
             ConfigAction::FitPage => "Fit the whole page",
-            ConfigAction::ToggleRuler => "Reading ruler on or off",
-            ConfigAction::ToggleAlpha => "Transparent page background",
-            ConfigAction::ToggleNote => "Open the notes terminal, or hide it from inside",
-            ConfigAction::FocusPdf => "Go to the PDF",
-            ConfigAction::WidenNote => "Note wider, pages narrower",
-            ConfigAction::NarrowNote => "Note narrower, pages wider",
-            ConfigAction::TagPage => "Tag the page you're reading in the note",
-            ConfigAction::GoToTag => "Go to the page tagged here in the note",
             ConfigAction::ShowHelp => "This list",
             ConfigAction::Quit => "Quit viewmer",
         }
@@ -248,7 +187,7 @@ mod tests {
 
     #[test]
     fn default_config_binds_every_action() {
-        let bindings = parse("").unwrap().bindings.unwrap();
+        let bindings = parse("").unwrap().bindings;
         for action in ConfigAction::ALL {
             assert!(
                 bindings.as_slice().iter().any(|b| b.action == action),
@@ -261,22 +200,21 @@ mod tests {
     #[test]
     fn a_config_holds_only_what_it_changes() {
         let config = parse(
-            "[viewer]\nresolution = 2\n[bindings]\nx = \"Quit\"\n\"Ctrl+h\" = \"\"\n",
+            "[viewer]\nresolution = 2\n[bindings]\nx = \"Quit\"\n\"Ctrl+f\" = \"\"\n",
         )
         .unwrap();
         /* A whole number where a fraction is expected */
         assert_eq!(config.viewer.resolution, 2.0);
         /* The rest stays as it ships */
         assert_eq!(config.viewer.zoom_step, 10.0);
-        let bindings = config.bindings.unwrap();
+        let bindings = config.bindings;
         let count = |a: ConfigAction| {
             bindings.as_slice().iter().filter(|b| b.action == a).count()
         };
         /* `x` is added to `q` and `Q` */
         assert_eq!(count(ConfigAction::Quit), 3);
-        assert!(count(ConfigAction::NextPage) > 0);
-        /* Ctrl-h, bound to "", is gone */
-        assert_eq!(count(ConfigAction::ToggleNote), 0);
+        /* Ctrl-f, bound to "", is gone; the other next-page keys stay */
+        assert_eq!(count(ConfigAction::NextPage), 2);
     }
 
     #[test]

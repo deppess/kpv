@@ -6,15 +6,14 @@ use crossterm::{
     cursor::MoveTo,
     queue,
     style::{
-        Attribute, Color, Print, ResetColor, SetAttribute, SetAttributes,
-        SetBackgroundColor, SetForegroundColor,
+        Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor,
+        SetForegroundColor,
     },
 };
 
 use std::sync::atomic::{AtomicU16, Ordering};
 
 use crate::globals::TERMINAL_SIZE;
-use crate::notes::pane::Cell;
 use crate::state::HelpItem;
 use crate::theme::{paint, Slot};
 
@@ -62,76 +61,10 @@ impl Viewport {
     }
 }
 
-/* Columns the notes panel takes on the left; the pages use the rest */
-static NOTES_COLS: AtomicU16 = AtomicU16::new(0);
-
-pub fn set_notes_cols(cols: u16) {
-    NOTES_COLS.store(cols, Ordering::Release);
-}
-
-/* The whole area inside the border, where panels go */
-pub fn inner() -> Viewport {
+/* Where the pages and panels go: the window inside its border */
+pub fn viewport() -> Viewport {
     let size = TERMINAL_SIZE.get().unwrap().read().unwrap();
     Viewport::from_size(size.columns, size.rows, size.width, size.height)
-}
-
-/* The whole window, edge to edge */
-pub fn window() -> Viewport {
-    let size = TERMINAL_SIZE.get().unwrap().read().unwrap();
-    let mut vp = Viewport::from_size(size.columns, size.rows, size.width, size.height);
-    (vp.col, vp.row, vp.cols, vp.rows) = (0, 0, size.columns.max(1), size.rows.max(1));
-    vp
-}
-
-/* The PDF's framed part of the window: all of it, or what the notes terminal leaves on
- * the right. Left, top, width and height in cells, the border included. */
-pub fn frame_rect() -> (u16, u16, u16, u16) {
-    let window = window();
-    let notes = NOTES_COLS
-        .load(Ordering::Acquire)
-        .min(window.cols.saturating_sub(3));
-    (notes, 0, window.cols - notes, window.rows)
-}
-
-/* Where the pages go: inside the PDF's frame */
-pub fn viewport() -> Viewport {
-    let mut vp = window();
-    let (left, top, width, height) = frame_rect();
-    vp.col = left + 1;
-    vp.row = top + 1;
-    vp.cols = width.saturating_sub(2).max(1);
-    vp.rows = height.saturating_sub(2).max(1);
-    vp
-}
-
-/* How wide the notes panel is, in percent of the window; set from the config, then
- * from what Ctrl-= and Ctrl-- made it last time */
-static NOTES_PERCENT: AtomicU16 = AtomicU16::new(45);
-pub const NOTES_PERCENT_RANGE: (u16, u16) = (15, 85);
-
-pub fn notes_percent() -> u16 {
-    NOTES_PERCENT.load(Ordering::Acquire)
-}
-
-pub fn set_notes_percent(percent: u16) {
-    let (low, high) = NOTES_PERCENT_RANGE;
-    NOTES_PERCENT.store(percent.clamp(low, high), Ordering::Release);
-}
-
-/* The notes panel on the left of `inner`, `percent` of its width: left, top, width
- * and height in cells, border included */
-pub fn notes_rect(window: &Viewport, percent: u16) -> (u16, u16, u16, u16) {
-    let width = (window.cols as u32 * percent.clamp(10, 90) as u32 / 100) as u16;
-    let width = width.max(12).min(window.cols.saturating_sub(12)).max(3);
-    (window.col, window.row, width, window.rows)
-}
-
-/* A 0-indexed cell under a mouse position in pixels */
-pub fn cell_at(vp: &Viewport, x: u16, y: u16) -> (u16, u16) {
-    (
-        (x as f64 / vp.pxpercol) as u16,
-        (y as f64 / vp.pxperrow) as u16,
-    )
 }
 
 fn color(slot: Slot) -> Color {
@@ -194,28 +127,25 @@ pub fn columns(text: &str) -> usize {
 }
 
 /* Draws the PDF's rounded frame with `title` in the top edge and `segments` in the
- * bottom edge: `╭ title ───╮` … `╰ NOR │ 3/42 │ 110% ───╯`. Beside the notes
- * terminal, it's bright while the PDF has the keys. */
-pub fn draw_frame(title: &str, segments: &[Segment], active: bool) -> io::Result<()> {
-    let (left, top, width, height) = frame_rect();
-    let (cols, rows) = (width as usize, height as usize);
+ * bottom edge: `╭ title ───╮` … `╰ NOR │ 3/42 │ 110% ───╯` */
+pub fn draw_frame(title: &str, segments: &[Segment]) -> io::Result<()> {
+    let (cols, rows) = {
+        let size = TERMINAL_SIZE.get().unwrap().read().unwrap();
+        (size.columns as usize, size.rows as usize)
+    };
     if cols < 4 || rows < 3 {
         return Ok(());
     }
     let inner = cols - 2;
     let mut out = io::stdout();
-    let border = color(if active {
-        Slot::FrameBorderActive
-    } else {
-        Slot::FrameBorder
-    });
+    let border = color(Slot::FrameBorder);
 
     /* Top edge with the title */
     let title = truncate(title, inner.saturating_sub(2));
     let title_len = columns(&title) + 2;
     queue!(
         out,
-        MoveTo(left, top),
+        MoveTo(0, 0),
         SetForegroundColor(border),
         Print("╭"),
         SetForegroundColor(color(Slot::FrameTitle)),
@@ -231,15 +161,15 @@ pub fn draw_frame(title: &str, segments: &[Segment], active: bool) -> io::Result
     for row in 1..rows - 1 {
         queue!(
             out,
-            MoveTo(left, top + row as u16),
+            MoveTo(0, row as u16),
             Print("│"),
-            MoveTo(left + cols as u16 - 1, top + row as u16),
+            MoveTo(cols as u16 - 1, row as u16),
             Print("│"),
         )?;
     }
 
     /* Bottom edge with the status segments */
-    queue!(out, MoveTo(left, top + rows as u16 - 1), Print("╰ "))?;
+    queue!(out, MoveTo(0, rows as u16 - 1), Print("╰ "))?;
     let mut used = 1;
     for (i, segment) in segments.iter().enumerate() {
         let sep = if i == 0 { "" } else { " │ " };
@@ -341,7 +271,7 @@ pub fn help_visible(vp: &Viewport) -> usize {
 
 /* Draws the help box centered in the viewport, starting at line `scroll` */
 pub fn draw_help(lines: &[HelpLine], scroll: usize) -> io::Result<()> {
-    let vp = inner();
+    let vp = viewport();
     let (left, top, width, height) = help_rect(&vp, lines);
     let (width, height) = (width as usize, height as usize);
     let visible = height - 2;
@@ -357,7 +287,7 @@ pub fn draw_help(lines: &[HelpLine], scroll: usize) -> io::Result<()> {
     };
     queue!(
         out,
-        MoveTo(left, top),
+        MoveTo(0, 0),
         SetBackgroundColor(background(Slot::HelpBackground)),
         SetForegroundColor(border),
         Print("╭"),
@@ -488,7 +418,6 @@ pub struct TocRow {
 
 /* Draws the contents panel down the left of the viewport. `rows` are the visible ones,
  * `position` goes in the top edge and `footer` in the bottom edge. */
-/* The contents panel opens at the left of the pages, beside the note when it's open */
 pub fn draw_toc(rows: &[TocRow], position: &str, footer: &str) -> io::Result<()> {
     let vp = viewport();
     let width = toc_width(&vp) as usize;
@@ -507,7 +436,7 @@ pub fn draw_toc(rows: &[TocRow], position: &str, footer: &str) -> io::Result<()>
     );
     queue!(
         out,
-        MoveTo(left, top),
+        MoveTo(0, 0),
         SetBackgroundColor(bg),
         SetForegroundColor(border),
         Print("╭"),
@@ -611,62 +540,6 @@ fn draw_toc_row(out: &mut io::Stdout, row: &TocRow, inner: usize) -> io::Result<
     )
 }
 
-/* Draws the notes terminal's screen at `rect`, edge to edge */
-pub fn draw_notes(rect: (u16, u16, u16, u16), screen: &[Vec<Cell>]) -> io::Result<()> {
-    let (left, top, width, height) = rect;
-    let bg = background(Slot::NotesBackground);
-    let mut out = io::stdout();
-    for row in 0..height {
-        queue!(out, MoveTo(left, top + row), ResetColor)?;
-        match screen.get(row as usize) {
-            Some(cells) => draw_cells(&mut out, cells, width as usize)?,
-            None => queue!(
-                out,
-                SetBackgroundColor(bg),
-                Print(" ".repeat(width as usize))
-            )?,
-        }
-    }
-    queue!(out, ResetColor)
-}
-
-/* One row of the editor's screen, `width` cells */
-fn draw_cells(out: &mut io::Stdout, cells: &[Cell], width: usize) -> io::Result<()> {
-    let mut last = None;
-    /* A wide character's second half has its own cell, so cells are columns */
-    let drawn = cells.len().min(width);
-    for cell in &cells[..drawn] {
-        if cell.c == '\0' {
-            /* The second half of a wide character, drawn with the first */
-            continue;
-        }
-        if last != Some(cell.style) {
-            let style = cell.style;
-            queue!(
-                out,
-                SetAttribute(Attribute::Reset),
-                SetForegroundColor(style.fg),
-                SetBackgroundColor(style.bg),
-                SetAttributes(style.attributes),
-            )?;
-            last = Some(style);
-        }
-        queue!(out, Print(cell.c))?;
-        for mark in &cell.marks {
-            queue!(out, Print(mark))?;
-        }
-    }
-    queue!(out, SetAttribute(Attribute::Reset))?;
-    if drawn < width {
-        queue!(
-            out,
-            SetBackgroundColor(background(Slot::NotesBackground)),
-            Print(" ".repeat(width - drawn)),
-        )?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -748,19 +621,6 @@ mod tests {
         assert_eq!(toc_hit(&vp, 400, 85), None);
         assert!(over_toc(&vp, 15, 25));
         assert!(!over_toc(&vp, 400, 85));
-    }
-
-    #[test]
-    fn the_notes_panel_takes_the_left_edge_to_edge() {
-        let edge_to_edge = |cols, rows| {
-            let mut window = Viewport::from_size(cols, rows, cols * 10, rows * 20);
-            (window.col, window.row, window.cols, window.rows) = (0, 0, cols, rows);
-            window
-        };
-        /* The whole height, from the left edge, with no border */
-        assert_eq!(notes_rect(&edge_to_edge(100, 40), 45), (0, 0, 45, 40));
-        /* A narrow window keeps 12 columns for the PDF */
-        assert_eq!(notes_rect(&edge_to_edge(20, 10), 45).2, 8);
     }
 
     #[test]

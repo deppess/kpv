@@ -246,7 +246,6 @@ fn xterm(n: u8) -> [u8; 3] {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Slot {
     FrameBorder,
-    FrameBorderActive,
     FrameTitle,
     StatusText,
     StatusSeparator,
@@ -255,7 +254,6 @@ pub enum Slot {
     StatusSearch,
     StatusContents,
     StatusHelp,
-    StatusNotes,
     StatusMatches,
     StatusMessage,
     StatusLink,
@@ -274,11 +272,8 @@ pub enum Slot {
     HelpKeys,
     HelpText,
     HelpMuted,
-    NotesBackground,
-    NotesText,
     PagesMatch,
     PagesCurrentMatch,
-    PagesRuler,
     PagesDarkBackground,
     PagesDarkText,
 }
@@ -311,7 +306,7 @@ const fn spec(
     }
 }
 
-pub const SPECS: [Spec; 36] = [
+pub const SPECS: [Spec; 31] = [
     spec(
         Slot::FrameBorder,
         "frame",
@@ -319,14 +314,6 @@ pub const SPECS: [Spec; 36] = [
         "bright-black",
         false,
         "The rounded border",
-    ),
-    spec(
-        Slot::FrameBorderActive,
-        "frame",
-        "border_active",
-        "bright-cyan",
-        false,
-        "The border while the PDF has the keys beside the notes terminal",
     ),
     spec(
         Slot::FrameTitle,
@@ -391,14 +378,6 @@ pub const SPECS: [Spec; 36] = [
         "bright-cyan",
         false,
         "HELP",
-    ),
-    spec(
-        Slot::StatusNotes,
-        "status",
-        "notes",
-        "bright-cyan",
-        false,
-        "NOTE",
     ),
     spec(
         Slot::StatusMatches,
@@ -538,22 +517,6 @@ pub const SPECS: [Spec; 36] = [
         "The hint in the bottom edge",
     ),
     spec(
-        Slot::NotesBackground,
-        "notes",
-        "background",
-        "default",
-        true,
-        "Behind the note",
-    ),
-    spec(
-        Slot::NotesText,
-        "notes",
-        "text",
-        "default",
-        false,
-        "The editor's own text color",
-    ),
-    spec(
         Slot::PagesMatch,
         "pages",
         "match",
@@ -568,14 +531,6 @@ pub const SPECS: [Spec; 36] = [
         "#ff7800",
         true,
         "The match you're on",
-    ),
-    spec(
-        Slot::PagesRuler,
-        "pages",
-        "ruler",
-        "#5aa0ff",
-        true,
-        "The reading ruler",
     ),
     spec(
         Slot::PagesDarkBackground,

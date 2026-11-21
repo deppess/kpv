@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeMap,
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -9,7 +8,7 @@ use std::{
 use mupdf::{pdf::PdfDocument, Document};
 use serde::{Deserialize, Serialize};
 
-use crate::{globals::CONFIG_FILENAME, jumps::Spot};
+use crate::globals::CONFIG_FILENAME;
 
 const VERSION: u32 = 1;
 
@@ -25,12 +24,6 @@ pub struct FileState {
     pub within: f32,
     /* 1 fits the page width */
     pub zoom: f32,
-    /* Printed page 1 is this many pages into the file; for scans without labels */
-    #[serde(default)]
-    pub page_offset: i32,
-    /* The offset was set with `:offset` rather than read off the pages */
-    #[serde(default)]
-    pub offset_by_hand: bool,
     /* Seconds since 1970 */
     #[serde(default)]
     pub opened: u64,
@@ -39,12 +32,6 @@ pub struct FileState {
     pub id: Option<String>,
     #[serde(default)]
     pub path: Option<String>,
-    /* The note that goes with the file */
-    #[serde(default)]
-    pub note: Option<String>,
-    /* Marks set with `m`, by letter */
-    #[serde(default)]
-    pub marks: BTreeMap<String, Spot>,
     #[serde(default)]
     pub layout: Layout,
 }
@@ -52,17 +39,9 @@ pub struct FileState {
 /* How the window was laid out, so a file opens as it was left */
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct Layout {
-    /* The notes panel was open, and had the keys */
-    #[serde(default)]
-    pub notes: bool,
-    #[serde(default)]
-    pub notes_focused: bool,
     /* The contents panel was open */
     #[serde(default)]
     pub contents: bool,
-    /* The reading ruler's page and row */
-    #[serde(default)]
-    pub ruler: Option<[usize; 2]>,
     /* How far right the view was, from 0 to 1 of the way, for pages wider than it */
     #[serde(default)]
     pub left: f32,
@@ -102,11 +81,6 @@ impl Store {
         Some(base.join(CONFIG_FILENAME))
     }
 
-    /* Where the file is now */
-    pub fn path(&self) -> &str {
-        &self.path
-    }
-
     /* A rebuilt file can come back with a new ID */
     pub fn set_id(&mut self, id: Option<String>) {
         self.id = id;
@@ -143,10 +117,7 @@ impl Store {
      * whole to a temporary file and renamed over the old one, so a crash or a second
      * viewer never leaves half a file. */
     pub fn save(&mut self, state: &FileState) -> io::Result<()> {
-        let mut state = state.clone();
-        state.version = VERSION;
-        state.id = self.id.clone();
-        state.path = Some(self.path.clone());
+        let mut state = self.filled(state);
         if self.saved.as_ref().is_some_and(|s| same_place(s, &state)) {
             return Ok(());
         }
@@ -170,10 +141,17 @@ impl Store {
 
     /* Whether `state` needs writing */
     pub fn is_dirty(&self, state: &FileState) -> bool {
+        let state = self.filled(state);
+        !self.saved.as_ref().is_some_and(|s| same_place(s, &state))
+    }
+
+    /* `state` as it is written, with the keys */
+    fn filled(&self, state: &FileState) -> FileState {
         let mut state = state.clone();
+        state.version = VERSION;
         state.id = self.id.clone();
         state.path = Some(self.path.clone());
-        !self.saved.as_ref().is_some_and(|s| same_place(s, &state))
+        state
     }
 }
 
@@ -182,10 +160,6 @@ fn same_place(a: &FileState, b: &FileState) -> bool {
     a.page == b.page
         && (a.within - b.within).abs() < 1e-4
         && (a.zoom - b.zoom).abs() < 1e-4
-        && a.page_offset == b.page_offset
-        && a.offset_by_hand == b.offset_by_hand
-        && a.marks == b.marks
-        && a.note == b.note
         && a.layout == b.layout
         && a.id == b.id
         && a.path == b.path
@@ -236,27 +210,6 @@ mod tests {
             zoom: 1.5,
             ..FileState::default()
         }
-    }
-
-    #[test]
-    fn marks_come_back() {
-        let dir = dir("marks");
-        let mut store = Store::new(dir.clone(), None, Path::new("a.pdf"));
-        let mut with_marks = state(1);
-        with_marks.marks.insert(
-            "a".to_owned(),
-            Spot {
-                page: 9,
-                within: 0.5,
-            },
-        );
-        assert!(store.is_dirty(&with_marks));
-        store.save(&with_marks).unwrap();
-        let loaded = Store::new(dir.clone(), None, Path::new("a.pdf"))
-            .load()
-            .unwrap();
-        assert_eq!(loaded.marks, with_marks.marks);
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -361,25 +314,5 @@ mod tests {
         bytes = text.into_bytes();
         let document = Document::from_bytes(&bytes, "application/pdf").unwrap();
         assert_eq!(document_id(&document), Some("00ff10".to_owned()));
-    }
-
-    #[test]
-    fn the_note_is_remembered_with_the_file() {
-        let dir =
-            std::env::temp_dir().join(format!("viewmer-note-{}", std::process::id()));
-        let mut store = Store::new(dir.clone(), None, Path::new("a.pdf"));
-        let mut state = FileState {
-            zoom: 1.0,
-            ..FileState::default()
-        };
-        store.save(&state).unwrap();
-        state.note = Some("/vault/a.md".to_owned());
-        assert!(store.is_dirty(&state), "choosing a note is a change");
-        store.save(&state).unwrap();
-        let loaded = Store::new(dir.clone(), None, Path::new("a.pdf"))
-            .load()
-            .unwrap();
-        assert_eq!(loaded.note.as_deref(), Some("/vault/a.md"));
-        fs::remove_dir_all(&dir).unwrap();
     }
 }
