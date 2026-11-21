@@ -1,0 +1,6 @@
+# MuPDF builds more than a PDF viewer uses: an HTML engine for e-books, text and
+# Office documents (with hyphenation patterns), DOCX, ODT and OCR output, barcodes,
+# Brotli streams and spot-color previews. Turning them off shrinks the binary; PDF
+# rendering, JPEG 2000, JBIG2, color management and CJK text stay.
+[env]
+CFLAGS = "-DFZ_ENABLE_MOBI=0 -DFZ_ENABLE_FB2=0 -DFZ_ENABLE_TXT=0 -DFZ_ENABLE_OFFICE=0 -DFZ_ENABLE_DOCX_OUTPUT=0 -DFZ_ENABLE_ODT_OUTPUT=0 -DFZ_ENABLE_OCR_OUTPUT=0 -DFZ_ENABLE_BARCODE=0 -DFZ_ENABLE_BROTLI=0 -DFZ_ENABLE_SPOT_RENDERING=0"
