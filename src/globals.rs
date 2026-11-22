@@ -6,9 +6,9 @@ use std::sync::{
     Mutex, OnceLock, RwLock,
 };
 
-pub const HELP_MSG: &str = r#"viewmer: kitty terminal PDF viewer
+pub const HELP_MSG: &str = r#"kpv: kitty terminal PDF viewer
 
-Usage: viewmer <file>
+Usage: kpv <file>
 
 Global options:
 -h, --help          Print this usage information.
@@ -16,8 +16,8 @@ Global options:
 "#;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const CONFIG_FILENAME: &str = "viewmer";
-pub const DEFAULT_CONFIG: &str = r#"# viewmer settings. Colors are in theme.toml next to this file.
+pub const CONFIG_FILENAME: &str = "kpv";
+pub const DEFAULT_CONFIG: &str = r#"# kpv settings. Colors are in theme.toml next to this file.
 # These are the defaults: a setting or key left out keeps its default, so this file
 # only needs what you change.
 

@@ -15,8 +15,8 @@ impl Command for ClearImages {
     }
 }
 
-/* Frees every image viewmer gave kitty, placed or kept for later, so that kitty gets
- * its memory back when viewmer leaves */
+/* Frees every image kpv gave kitty, placed or kept for later, so that kitty gets
+ * its memory back when kpv leaves */
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FreeImages;
 impl Command for FreeImages {

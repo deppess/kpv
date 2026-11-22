@@ -1,10 +1,10 @@
 [package]
-name = "viewmer"
-version = "2.0.0"
+name = "kpv"
+version = "3.0.0"
 edition = "2021"
 description = "A PDF viewer for the kitty terminal"
 license = "PolyForm-Strict-1.0.0"
-repository = "https://codeberg.org/deppes/viewmer"
+repository = "https://codeberg.org/deppes/kpv"
 readme = "README.md"
 publish = false
 

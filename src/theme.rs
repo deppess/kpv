@@ -551,7 +551,7 @@ pub const SPECS: [Spec; 31] = [
 ];
 
 const HEADER: &str = "\
-# viewmer colors. A color can be written as
+# kpv colors. A color can be written as
 #   \"#1e2030\" or \"#fff\"          hex
 #   \"rgb(30, 32, 48)\"            red, green and blue from 0 to 255
 #   \"hsl(230, 23%, 15%)\"         hue, saturation and lightness
