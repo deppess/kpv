@@ -1,13 +1,13 @@
-# kpv
+# tpv
 
 A PDF viewer for terminals with the kitty graphics protocol, such as kitty and Rex. Pages scroll continuously in a framed window with a status bar, and you get vim-like keys, page jumps, full-text search with highlights, a table of contents, a key list on `?`, clickable links and live reload when the file changes. It is a fork of [MeowPDF](https://github.com/monoamine11231/MeowPDF), reworked for one setup.
 
-Source: [Codeberg](https://codeberg.org/deppes/kpv) (primary) · [GitHub](https://github.com/deppess/kpv) (mirror)
+Source: [Codeberg](https://codeberg.org/deppes/tpv) (primary) · [GitHub](https://github.com/deppess/tpv) (mirror)
 
 ## Usage
 
 ```sh
-kpv <file.pdf>
+tpv <file.pdf>
 ```
 
 It needs a terminal with the kitty graphics protocol, such as kitty 0.31 or later or Rex. It does not work inside tmux.
@@ -46,9 +46,9 @@ Clicking a link opens it, or jumps to the spot it points to when it points into 
 
 ## Remembered position
 
-Each file opens as you left it: the same page, the same spot on it, the same zoom and the same spot across a wide page, with the contents panel open or closed as it was. All of it is written a moment after the view stops changing, on quitting, and when the terminal window closes or kpv is stopped with `kill`. A position is kept per page rather than in pixels, so it comes back right in a window of another size.
+Each file opens as you left it: the same page, the same spot on it, the same zoom and the same spot across a wide page, with the contents panel open or closed as it was. All of it is written a moment after the view stops changing, on quitting, and when the terminal window closes or tpv is stopped with `kill`. A position is kept per page rather than in pixels, so it comes back right in a window of another size.
 
-Each file gets one small TOML file in `~/.local/state/kpv/` (or under `$XDG_STATE_HOME`). A file is found by the permanent ID inside the PDF, so moving or renaming it keeps its place, and by its path, for PDFs without an ID and for LaTeX output that gets a new one on every build. Files are replaced in one step, so a crash or two viewers on one file never leave a broken one, and a broken or unknown file is ignored. `remember_position = false` turns it off.
+Each file gets one small TOML file in `~/.local/state/tpv/` (or under `$XDG_STATE_HOME`). A file is found by the permanent ID inside the PDF, so moving or renaming it keeps its place, and by its path, for PDFs without an ID and for LaTeX output that gets a new one on every build. Files are replaced in one step, so a crash or two viewers on one file never leave a broken one, and a broken or unknown file is ignored. `remember_position = false` turns it off.
 
 ## Table of contents
 
@@ -74,7 +74,7 @@ Search ignores case. It runs alongside the pages, so they keep drawing and scrol
 
 ## Configuration
 
-The config is created on first run at `~/.config/kpv/config.toml` (or under `$XDG_CONFIG_HOME` when that is set), with a line about each setting. It lists the defaults; a setting or key left out keeps its default, so the file only needs what you change, and settings that later versions add work without touching it:
+The config is created on first run at `~/.config/tpv/config.toml` (or under `$XDG_CONFIG_HOME` when that is set), with a line about each setting. It lists the defaults; a setting or key left out keeps its default, so the file only needs what you change, and settings that later versions add work without touching it:
 
 - `[viewer]`: `scroll_step`, `zoom_step` (percent of the page width), `resolution` (pages are drawn at the screen's own resolution times this, again whenever the zoom changes, so they stay sharp when zoomed in; zoomed far in, the part in view is drawn sharp and the pages around it coarser until you get to them, so any zoom fits in the memory the terminal keeps for images), `page_gap`, `invert_wheel`, `link_hints` (where a hovered link points) and `remember_position`.
 - `[bindings]`: `"key" = "Action"`, added to the default keys; `"key" = ""` unbinds a default. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `HalfPageDown`, `HalfPageUp`, `ZoomIn`, `ZoomOut`, `FitWidth`, `FitPage`, `CenterViewer`, `ToggleInverse`, `ShowHelp` and `Quit`.
@@ -85,28 +85,28 @@ Colors are in `theme.toml` next to the config, written on first run with every c
 
 Panel backgrounds (`contents.background`, `contents.selected`, `help.background`) and the colors painted on pages (`pages.match`, `pages.current_match`) can be see-through: add two hex digits of opacity, from `00` (clear) to `ff` (solid), as in `"#1e2030cc"`. The page then shows through the panel. A page color without them is mixed in at a strength that keeps the text readable.
 
-A mistake in the file doesn't stop kpv: that color keeps its default, and the status bar says what's wrong.
+A mistake in the file doesn't stop tpv: that color keeps its default, and the status bar says what's wrong.
 
 ## Using it from yazi
 
 ```toml
-[[opener.kpv]]
-run = 'kpv %s'
-desc = "kpv"
+[[opener.tpv]]
+run = 'tpv %s'
+desc = "tpv"
 block = true
 
 [open]
 rules = [
-  { url = "*.pdf", use = ["kpv"] },
+  { url = "*.pdf", use = ["tpv"] },
 ]
 ```
 
 ## Build and test
 
-kpv is built from source, and built and tested on macOS. It needs Rust, and the Xcode command line tools for building MuPDF. Install it from a checkout, so that `.cargo/config.toml` leaves out the parts of MuPDF a PDF viewer doesn't use (`cargo install --git` doesn't read it, and builds a binary about 2 MB larger):
+tpv is built from source, and built and tested on macOS. It needs Rust, and the Xcode command line tools for building MuPDF. Install it from a checkout, so that `.cargo/config.toml` leaves out the parts of MuPDF a PDF viewer doesn't use (`cargo install --git` doesn't read it, and builds a binary about 2 MB larger):
 
 ```sh
-git clone https://codeberg.org/deppes/kpv && cd kpv
+git clone https://codeberg.org/deppes/tpv && cd tpv
 cargo install --path .
 ```
 

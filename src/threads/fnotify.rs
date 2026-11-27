@@ -58,7 +58,7 @@ mod tests {
     #[test]
     fn replace_by_rename_triggers_one_reload() {
         let folder =
-            std::env::temp_dir().join(format!("kpv-watch-{}", std::process::id()));
+            std::env::temp_dir().join(format!("tpv-watch-{}", std::process::id()));
         fs::create_dir_all(&folder).unwrap();
         let file = folder.join("doc.pdf");
         fs::write(&file, b"one").unwrap();

@@ -109,12 +109,12 @@ impl ConfigAction {
             ConfigAction::FitWidth => "Fit the width (100%)",
             ConfigAction::FitPage => "Fit the whole page",
             ConfigAction::ShowHelp => "This list",
-            ConfigAction::Quit => "Quit kpv",
+            ConfigAction::Quit => "Quit tpv",
         }
     }
 }
 
-/* The folder with config.toml and theme.toml: `~/.config/kpv` on every system, or
+/* The folder with config.toml and theme.toml: `~/.config/tpv` on every system, or
  * under $XDG_CONFIG_HOME when that's set. Made if it isn't there. */
 pub fn config_folder() -> Result<PathBuf, String> {
     let base = match std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {

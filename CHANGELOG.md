@@ -1,12 +1,20 @@
 # Changelog
 
+## 4.0.0 - 2026-11-26
+
+kpv is now tpv: the command, `~/.config/tpv` and `~/.local/state/tpv`. To keep a config and remembered positions, move `~/.config/kpv` and `~/.local/state/kpv` to the new names; a yazi opener needs `kpv` changed to `tpv`.
+
+### Changed
+
+- tpv is described as a viewer for any terminal with the kitty graphics protocol, such as kitty or Rex, and an error names the terminal rather than kitty.
+
 ## 3.0.0 - 2026-11-22
 
 viewmer is now kpv: the command, `~/.config/kpv` and `~/.local/state/kpv`. To keep a config and remembered positions, move `~/.config/viewmer` and `~/.local/state/viewmer` to the new names; a yazi opener needs `viewmer` changed to `kpv`.
 
 ## 2.0.0 - 2026-11-21
 
-kpv is now the PDF viewer alone.
+tpv is now the PDF viewer alone.
 
 ### Removed
 
@@ -24,7 +32,7 @@ Configs that bind the removed actions need those keys taken out.
 
 ## 1.0.0 - 2026-11-19
 
-The first release of kpv, forked from MeowPDF 1.2.2, whose history is in [its repository](https://github.com/monoamine11231/MeowPDF/blob/main/CHANGELOG.md).
+The first release of tpv, forked from MeowPDF 1.2.2, whose history is in [its repository](https://github.com/monoamine11231/MeowPDF/blob/main/CHANGELOG.md).
 
 ### Reading
 
@@ -42,9 +50,9 @@ The first release of kpv, forked from MeowPDF 1.2.2, whose history is in [its re
 
 ### Settings
 
-- `config.toml` and `theme.toml` in `~/.config/kpv`: a config only needs what it changes, colors take any common notation and panels can be see-through.
+- `config.toml` and `theme.toml` in `~/.config/tpv`: a config only needs what it changes, colors take any common notation and panels can be see-through.
 
 ### Robustness
 
 - A crash watcher gives the terminal back, logs the crash and starts the viewer again where it was. Closing the window, `kill` and interrupts quit as `q` does, saving first; state files are written whole and synced before they replace the old ones.
-- Quitting frees the images kpv gave kitty.
+- Quitting frees the images tpv gave kitty.

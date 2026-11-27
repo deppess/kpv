@@ -71,7 +71,7 @@ impl Store {
         }
     }
 
-    /* `~/.local/state/kpv` on every system, or under $XDG_STATE_HOME when that's
+    /* `~/.local/state/tpv` on every system, or under $XDG_STATE_HOME when that's
      * set */
     pub fn default_dir() -> Option<PathBuf> {
         let base = match std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty()) {
@@ -195,7 +195,7 @@ mod tests {
     /* A fresh directory for one test */
     fn dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "kpv-store-{}-{}",
+            "tpv-store-{}-{}",
             std::process::id(),
             name
         ));

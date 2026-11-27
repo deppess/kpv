@@ -64,13 +64,13 @@ fn main() {
             return;
         }
         "-v" | "--version" => {
-            println!("kpv {}", VERSION);
+            println!("tpv {}", VERSION);
             return;
         }
         _ => (),
     }
     if !Path::new(&arg).is_file() {
-        eprintln!("kpv: no such file: {}", arg);
+        eprintln!("tpv: no such file: {}", arg);
         std::process::exit(1);
     }
     /* ============================= Uncook the terminal ============================= */
@@ -322,12 +322,12 @@ fn main() {
     restore_terminal();
     drivers::graphics::terminal_graphics_remove_leftovers();
     if let Some(e) = app.fatal {
-        eprintln!("kpv: {}", e);
+        eprintln!("tpv: {}", e);
         std::process::exit(1);
     }
 }
 
-/* Turns off what kpv turned on and gives the terminal back as it was. Errors are
+/* Turns off what tpv turned on and gives the terminal back as it was. Errors are
  * ignored: this also runs when the terminal is gone, and from the panic hook. */
 fn restore_terminal() {
     let _ = execute!(
@@ -344,7 +344,7 @@ fn restore_terminal() {
 /* Gives the terminal back and exits with `message` */
 fn fail(message: &str) -> ! {
     restore_terminal();
-    eprintln!("kpv: {}", message);
+    eprintln!("tpv: {}", message);
     std::process::exit(1);
 }
 
