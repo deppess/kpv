@@ -1,6 +1,6 @@
 # kpv
 
-A PDF viewer for the kitty terminal. Pages scroll continuously in a framed window with a status bar, and you get vim-like keys, page jumps, full-text search with highlights, a table of contents, a key list on `?`, clickable links and live reload when the file changes. It is a fork of [MeowPDF](https://github.com/monoamine11231/MeowPDF), reworked for one setup.
+A PDF viewer for terminals with the kitty graphics protocol, such as kitty and Rex. Pages scroll continuously in a framed window with a status bar, and you get vim-like keys, page jumps, full-text search with highlights, a table of contents, a key list on `?`, clickable links and live reload when the file changes. It is a fork of [MeowPDF](https://github.com/monoamine11231/MeowPDF), reworked for one setup.
 
 Source: [Codeberg](https://codeberg.org/deppes/kpv) (primary) · [GitHub](https://github.com/deppess/kpv) (mirror)
 
@@ -10,7 +10,7 @@ Source: [Codeberg](https://codeberg.org/deppes/kpv) (primary) · [GitHub](https:
 kpv <file.pdf>
 ```
 
-It needs kitty 0.31 or later, because pages are drawn with kitty's graphics protocol. It does not work inside tmux.
+It needs a terminal with the kitty graphics protocol, such as kitty 0.31 or later or Rex. It does not work inside tmux.
 
 The file name sits in the top edge of the frame. The bottom edge is the status bar:
 
@@ -76,7 +76,7 @@ Search ignores case. It runs alongside the pages, so they keep drawing and scrol
 
 The config is created on first run at `~/.config/kpv/config.toml` (or under `$XDG_CONFIG_HOME` when that is set), with a line about each setting. It lists the defaults; a setting or key left out keeps its default, so the file only needs what you change, and settings that later versions add work without touching it:
 
-- `[viewer]`: `scroll_step`, `zoom_step` (percent of the page width), `resolution` (pages are drawn at the screen's own resolution times this, again whenever the zoom changes, so they stay sharp when zoomed in; zoomed far in, the part in view is drawn sharp and the pages around it coarser until you get to them, so any zoom fits in the memory kitty keeps for images), `page_gap`, `invert_wheel`, `link_hints` (where a hovered link points) and `remember_position`.
+- `[viewer]`: `scroll_step`, `zoom_step` (percent of the page width), `resolution` (pages are drawn at the screen's own resolution times this, again whenever the zoom changes, so they stay sharp when zoomed in; zoomed far in, the part in view is drawn sharp and the pages around it coarser until you get to them, so any zoom fits in the memory the terminal keeps for images), `page_gap`, `invert_wheel`, `link_hints` (where a hovered link points) and `remember_position`.
 - `[bindings]`: `"key" = "Action"`, added to the default keys; `"key" = ""` unbinds a default. Key syntax follows [keybinds-rs](https://github.com/rhysd/keybinds-rs/blob/main/doc/binding_syntax.md). The actions are `MoveUp`, `MoveDown`, `MoveLeft`, `MoveRight`, `NextPage`, `PrevPage`, `JumpFirstPage`, `JumpLastPage`, `CommandLine`, `Search`, `NextMatch`, `PrevMatch`, `ClearSearch`, `ShowOutline`, `HalfPageDown`, `HalfPageUp`, `ZoomIn`, `ZoomOut`, `FitWidth`, `FitPage`, `CenterViewer`, `ToggleInverse`, `ShowHelp` and `Quit`.
 
 ## Colors
@@ -120,7 +120,7 @@ cargo build --release
 cargo install --path .
 ```
 
-The tests cover the page placement and clipping math, which images a frame places again, reading the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), key and prompt handling, search stepping, the help list, reading colors and the theme file, laying the config over the defaults, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in kitty itself is checked by hand.
+The tests cover the page placement and clipping math, which images a frame places again, reading the outline from a PDF, folding and filtering the contents panel, the remembered state (moved, rebuilt and broken files), key and prompt handling, search stepping, the help list, reading colors and the theme file, laying the config over the defaults, and the file watcher, which must reload once when a file is replaced by a rename. Drawing in the terminal itself is checked by hand.
 
 ## License
 

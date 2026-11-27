@@ -6,7 +6,7 @@ use std::sync::{
     Mutex, OnceLock, RwLock,
 };
 
-pub const HELP_MSG: &str = r#"kpv: kitty terminal PDF viewer
+pub const HELP_MSG: &str = r#"kpv: PDF viewer for the kitty graphics protocol
 
 Usage: kpv <file>
 

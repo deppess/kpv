@@ -2,7 +2,7 @@
 name = "kpv"
 version = "3.0.0"
 edition = "2021"
-description = "A PDF viewer for the kitty terminal"
+description = "A PDF viewer for terminals with the kitty graphics protocol"
 license = "PolyForm-Strict-1.0.0"
 repository = "https://codeberg.org/deppes/kpv"
 readme = "README.md"
